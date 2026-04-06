@@ -1,8 +1,8 @@
 # TurboQuant
 
-Standalone Go implementation of the TurboQuant MSE-optimal and inner-product-preserving vector quantization algorithm ([arXiv 2504.19874](https://arxiv.org/abs/2504.19874)).
+Standalone Go implementation of the TurboQuant MSE-optimal and inner-product-preserving vector quantization algorithm ([arXiv 2504.19874](https://arxiv.org/abs/2504.19874)). Extracted from [GoSX](https://github.com/odvcencio/gosx), where it powers CRDT vector sync, in-memory semantic search, and real-time 3D mesh compression.
 
-Compresses float32 vectors to 1-8 bits per dimension with provably near-optimal distortion. Zero external dependencies. Thread-safe after construction. Deterministic with seed. Compiles to WASM.
+Compresses float32 vectors to 1-8 bits per dimension with provably near-optimal distortion. The only Go implementation of TurboQuant. Zero external dependencies. Thread-safe after construction. Deterministic with seed. Compiles to WASM.
 
 ## Install
 
@@ -99,6 +99,38 @@ data, err := turboquant.MarshalQuantizer(q)
 q2, err := turboquant.UnmarshalQuantizer(data)
 // q and q2 produce identical output
 ```
+
+## Used by GoSX
+
+TurboQuant was extracted from [GoSX](https://github.com/odvcencio/gosx), a Go-native web platform that compiles to WASM without CGo. GoSX uses TurboQuant in two subsystems:
+
+### CRDT vector values
+
+GoSX's CRDT package stores embedding vectors inside collaborative documents that sync between replicas in real-time. The MSE quantizer compresses these vectors before transmission and storage. A fixed seed ensures every replica produces byte-identical packed output — critical for CRDT convergence, where all peers must agree on the compressed representation without coordination.
+
+```go
+// Inside GoSX's crdt package:
+// Every replica uses the same seed, so quantization is deterministic
+q := turboquant.NewWithSeed(dim, bitWidth, vectorQuantSeed)
+packed, norm := q.Quantize(embedding)
+// packed bytes are identical on every replica for the same input
+```
+
+### In-memory vector search
+
+GoSX's `vecdb` package is a concurrent in-memory vector index backed by the IP quantizer. Vectors are quantized on insertion, and similarity search uses `PrepareQuery` to amortize the O(d^2) projection across all stored vectors. This index powers three semantic primitives built into the framework:
+
+- **SemanticCache** — cache responses by meaning instead of exact key match. A query that's semantically similar to a cached query returns the cached result.
+- **SemanticRouter** — route incoming requests to handlers by intent similarity instead of URL pattern matching.
+- **ContentIndex** — search pages and documents by semantic similarity for site-wide search.
+
+All three run entirely in-process with no external vector database. The quantized index fits in memory because TurboQuant compresses 384-dim float32 vectors (1,536 bytes) to 144 bytes at 3-bit — a 10x reduction that makes 100K-vector indexes practical at ~14MB.
+
+### 3D scene compression (Kiln)
+
+TurboQuant is the compression layer for [Kiln](https://github.com/odvcencio/kiln), a collaborative 3D creation platform built on GoSX. Mesh vertex data (positions, normals, UVs) is quantized for real-time streaming between collaborators over WebSocket. Vertex positions use 8-bit quantization, normals use 4-bit, and UVs use 8-bit — reducing mesh bandwidth by 4-8x while preserving visual fidelity. Because the entire GoSX stack compiles to WASM, TurboQuant runs on both server (canonical evaluation) and client (preview rendering) without native dependencies.
+
+---
 
 ## Bit-width guide
 
