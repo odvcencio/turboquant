@@ -173,6 +173,7 @@ func runCLI(args []string, stdout, stderr io.Writer) error {
 	iterations := fs.Int("iterations", 3, "number of timed runs per capture group")
 	maxGroups := fs.Int("max-groups", 0, "optional cap on complete capture groups per profile set")
 	tryGPU := fs.Bool("gpu", false, "try the experimental GPU path when available")
+	expandProfile := fs.Bool("expand-profile", false, "expand profile to cover all layers in the capture via nearest-neighbor assignment")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -204,6 +205,13 @@ func runCLI(args []string, stdout, stderr io.Writer) error {
 	groups, err := loadCaptureGroups(*capturePath)
 	if err != nil {
 		return err
+	}
+
+	if *expandProfile {
+		captureLayers := captureLayerIDs(groups)
+		for i := range profiles {
+			profiles[i] = expandProfileToCapture(profiles[i], captureLayers)
+		}
 	}
 
 	out := report{
@@ -838,6 +846,22 @@ func abs(x int) int {
 		return -x
 	}
 	return x
+}
+
+// captureLayerIDs returns the sorted unique layer IDs across all capture groups.
+func captureLayerIDs(groups []captureGroup) []int {
+	seen := make(map[int]struct{})
+	for _, group := range groups {
+		for layerID := range group.Captures {
+			seen[layerID] = struct{}{}
+		}
+	}
+	ids := make([]int, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	return ids
 }
 
 func nsToMS(ns float64) float64 {

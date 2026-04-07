@@ -221,6 +221,85 @@ func TestRunCLIProfileSetFilter(t *testing.T) {
 	}
 }
 
+func TestRunCLIExpandProfile(t *testing.T) {
+	dir := t.TempDir()
+	capturePath := filepath.Join(dir, "capture.json")
+	profilePath := filepath.Join(dir, "profile.json")
+	outputPath := filepath.Join(dir, "bench.json")
+
+	// Capture has 4 layers (0,1,2,3) but profile only covers layers 0 and 3.
+	capture := `{
+  "samples": [
+    {"model":"demo","prompt_index":0,"layer":0,"token_index":1,"token_position":"last","sequence_length":2,"heads":2,"head_dim":2,"tokens":2,"query":[1,0,0,1],"keys":[1,0,0,1,0,1,1,0],"values":[10,0,0,20,0,30,40,0]},
+    {"model":"demo","prompt_index":0,"layer":1,"token_index":1,"token_position":"last","sequence_length":2,"heads":2,"head_dim":2,"tokens":2,"query":[0,1,1,0],"keys":[0,1,1,0,1,0,0,1],"values":[0,11,12,0,13,0,0,14]},
+    {"model":"demo","prompt_index":0,"layer":2,"token_index":1,"token_position":"last","sequence_length":2,"heads":2,"head_dim":2,"tokens":2,"query":[1,1,0,1],"keys":[1,1,0,1,0,1,1,1],"values":[5,5,5,5,5,5,5,5]},
+    {"model":"demo","prompt_index":0,"layer":3,"token_index":1,"token_position":"last","sequence_length":2,"heads":2,"head_dim":2,"tokens":2,"query":[0,1,1,1],"keys":[0,1,1,1,1,1,0,1],"values":[1,2,3,4,5,6,7,8]}
+  ]
+}`
+	profile := `{
+  "profile_set": "last",
+  "token_positions": ["last"],
+  "layers": [
+    {"layer": 0, "heads": 2, "head_dim": 2, "key_bits": 2, "value_bits": 2, "top_k": 2, "capacity": 2},
+    {"layer": 3, "heads": 2, "head_dim": 2, "key_bits": 3, "value_bits": 2, "top_k": 2, "capacity": 2}
+  ],
+  "profiles": [
+    {"layer": 0, "heads": 2, "head_dim": 2, "key_bits": 2, "value_bits": 2, "capacity": 2, "seed": 1},
+    {"layer": 3, "heads": 2, "head_dim": 2, "key_bits": 3, "value_bits": 2, "capacity": 2, "seed": 3}
+  ]
+}`
+	if err := os.WriteFile(capturePath, []byte(capture), 0o644); err != nil {
+		t.Fatalf("WriteFile(capture): %v", err)
+	}
+	if err := os.WriteFile(profilePath, []byte(profile), 0o644); err != nil {
+		t.Fatalf("WriteFile(profile): %v", err)
+	}
+
+	// Without --expand-profile this would fail (no complete groups).
+	if err := runCLI([]string{
+		"--capture", capturePath,
+		"--profile", profilePath,
+		"--expand-profile",
+		"--out", outputPath,
+		"--warmup", "0",
+		"--iterations", "1",
+	}, os.Stdout, os.Stderr); err != nil {
+		t.Fatalf("runCLI: %v", err)
+	}
+
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("ReadFile(output): %v", err)
+	}
+	var got report
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal(report): %v", err)
+	}
+	if len(got.ProfileSets) != 1 {
+		t.Fatalf("len(ProfileSets) = %d want 1", len(got.ProfileSets))
+	}
+	item := got.ProfileSets[0]
+	if len(item.LayerSummaries) != 4 {
+		t.Fatalf("len(LayerSummaries) = %d want 4", len(item.LayerSummaries))
+	}
+	// Layers 0,1 should use key_bits=2 (donor 0). Layers 2,3 should use key_bits=3 (donor 3).
+	for _, ls := range item.LayerSummaries {
+		switch ls.Layer {
+		case 0, 1:
+			if ls.KeyBits != 2 {
+				t.Fatalf("layer %d key_bits = %d want 2", ls.Layer, ls.KeyBits)
+			}
+		case 2, 3:
+			if ls.KeyBits != 3 {
+				t.Fatalf("layer %d key_bits = %d want 3", ls.Layer, ls.KeyBits)
+			}
+		}
+	}
+	if item.Summary.CompressionVsFP32 <= 0 {
+		t.Fatalf("CompressionVsFP32 = %v want > 0", item.Summary.CompressionVsFP32)
+	}
+}
+
 func TestExpandProfileToCapture(t *testing.T) {
 	// Profile covers layers 0 and 6 (simulating spread:2 of a 10-layer model).
 	// Capture covers layers 0-9. Expansion should fill layers 1-5 and 7-9.
