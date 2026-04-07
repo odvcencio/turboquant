@@ -1,10 +1,23 @@
 package turboquant
 
-import "math/rand"
+import (
+	"math/rand"
+	"testing"
+)
 
 // raceEnabled is set to true in race_test.go when the race detector is active.
 var raceEnabled bool
 
 func newTestRNG() *rand.Rand {
 	return rand.New(rand.NewSource(42))
+}
+
+func expectPanic(t *testing.T, fn func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	fn()
 }

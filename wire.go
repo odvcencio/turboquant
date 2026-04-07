@@ -16,6 +16,11 @@ const (
 
 // EncodeMSE encodes an MSE-quantized vector to the TurboQuant wire format.
 func EncodeMSE(dim, bitWidth int, packed []byte, norm float32) []byte {
+	panicOnInvalid("turboquant.EncodeMSE", validateWireDim(dim))
+	panicOnInvalid("turboquant.EncodeMSE", ValidatePacked(dim, bitWidth, packed))
+	if math.IsNaN(float64(norm)) || math.IsInf(float64(norm), 0) {
+		panic(fmt.Sprintf("turboquant.EncodeMSE: turboquant: invalid norm %v", norm))
+	}
 	buf := make([]byte, wireHeaderSize+len(packed))
 	buf[0], buf[1] = 'T', 'Q'
 	buf[2] = wireVersion
@@ -47,10 +52,19 @@ func DecodeMSE(data []byte) (dim, bitWidth int, packed []byte, norm float32, err
 	}
 	dim = int(binary.BigEndian.Uint16(data[4:6]))
 	bitWidth = int(data[6])
+	if err := validateWireDim(dim); err != nil {
+		return 0, 0, nil, 0, err
+	}
+	if err := validateBitWidth(bitWidth); err != nil {
+		return 0, 0, nil, 0, err
+	}
 	norm = math.Float32frombits(binary.BigEndian.Uint32(data[8:12]))
 	dataLen := int(binary.BigEndian.Uint32(data[12:16]))
-	if len(data) < wireHeaderSize+dataLen {
+	if len(data) != wireHeaderSize+dataLen {
 		return 0, 0, nil, 0, fmt.Errorf("turboquant: truncated payload")
+	}
+	if want := PackedSize(dim, bitWidth); dataLen != want {
+		return 0, 0, nil, 0, fmt.Errorf("turboquant: invalid MSE payload length %d want %d", dataLen, want)
 	}
 	packed = make([]byte, dataLen)
 	copy(packed, data[wireHeaderSize:wireHeaderSize+dataLen])
@@ -59,6 +73,8 @@ func DecodeMSE(data []byte) (dim, bitWidth int, packed []byte, norm float32, err
 
 // EncodeIP encodes an IP-quantized vector to the TurboQuant wire format.
 func EncodeIP(dim, bitWidth int, qx IPQuantized) []byte {
+	panicOnInvalid("turboquant.EncodeIP", validateWireDim(dim))
+	panicOnInvalid("turboquant.EncodeIP", ValidateIPQuantized(dim, bitWidth, qx))
 	buf := make([]byte, wireHeaderSize+len(qx.MSE)+len(qx.Signs))
 	buf[0], buf[1] = 'T', 'Q'
 	buf[2] = wireVersion
@@ -91,11 +107,23 @@ func DecodeIP(data []byte) (dim, bitWidth int, qx IPQuantized, err error) {
 	}
 	dim = int(binary.BigEndian.Uint16(data[4:6]))
 	bitWidth = int(data[6])
+	if err := validateWireDim(dim); err != nil {
+		return 0, 0, IPQuantized{}, err
+	}
+	if err := validateIPBitWidth(bitWidth); err != nil {
+		return 0, 0, IPQuantized{}, err
+	}
 	qx.ResNorm = math.Float32frombits(binary.BigEndian.Uint32(data[8:12]))
 	mseLen := int(binary.BigEndian.Uint32(data[12:16]))
 	signsLen := int(binary.BigEndian.Uint32(data[16:20]))
-	if len(data) < wireHeaderSize+mseLen+signsLen {
+	if len(data) != wireHeaderSize+mseLen+signsLen {
 		return 0, 0, IPQuantized{}, fmt.Errorf("turboquant: truncated payload")
+	}
+	if want := PackedSize(dim, bitWidth-1); mseLen != want {
+		return 0, 0, IPQuantized{}, fmt.Errorf("turboquant: invalid IP MSE payload length %d want %d", mseLen, want)
+	}
+	if want := (dim + 7) / 8; signsLen != want {
+		return 0, 0, IPQuantized{}, fmt.Errorf("turboquant: invalid IP sign payload length %d want %d", signsLen, want)
 	}
 	qx.MSE = make([]byte, mseLen)
 	copy(qx.MSE, data[wireHeaderSize:wireHeaderSize+mseLen])

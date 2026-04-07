@@ -80,12 +80,8 @@ func householderQR(a []float64, dim int) []float64 {
 // rotate computes dst = matrix · src.
 func rotate(dst, src, matrix []float32, dim int) {
 	for i := 0; i < dim; i++ {
-		var sum float32
 		row := i * dim
-		for j := 0; j < dim; j++ {
-			sum += matrix[row+j] * src[j]
-		}
-		dst[i] = sum
+		dst[i] = dotFloat32s(matrix[row:row+dim], src)
 	}
 }
 

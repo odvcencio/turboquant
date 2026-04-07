@@ -47,3 +47,47 @@ func TestRotationPreservesNorm(t *testing.T) {
 		t.Errorf("rotated norm² = %.6f, want ≈ 1.0", normSq)
 	}
 }
+
+func TestHadamardRotationOrthogonality(t *testing.T) {
+	dims := []int{3, 5, 16, 127, 384}
+	if raceEnabled {
+		dims = []int{3, 5, 16, 127}
+	}
+	for _, dim := range dims {
+		rng := rand.New(rand.NewSource(7))
+		rot := newHadamardRotation(dim, rng)
+		for trial := 0; trial < 10; trial++ {
+			x := randomUnitVector(dim, rng)
+			y := make([]float32, dim)
+			tmp := make([]float32, dim)
+			work := make([]float32, dim)
+			rot.apply(y, x, work)
+			rot.applyInverse(tmp, y, work)
+			var errSq float64
+			for i := range x {
+				d := float64(tmp[i] - x[i])
+				errSq += d * d
+			}
+			if errSq > 1e-4 {
+				t.Errorf("dim=%d trial=%d: hadamard round-trip error %.6f", dim, trial, errSq)
+			}
+		}
+	}
+}
+
+func TestHadamardRotationPreservesNorm(t *testing.T) {
+	dim := 384
+	rng := rand.New(rand.NewSource(11))
+	rot := newHadamardRotation(dim, rng)
+	x := randomUnitVector(dim, rng)
+	y := make([]float32, dim)
+	work := make([]float32, dim)
+	rot.apply(y, x, work)
+	var normSq float64
+	for _, v := range y {
+		normSq += float64(v) * float64(v)
+	}
+	if math.Abs(normSq-1.0) > 1e-4 {
+		t.Errorf("hadamard rotated norm² = %.6f, want ≈ 1.0", normSq)
+	}
+}

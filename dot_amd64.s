@@ -1,0 +1,74 @@
+#include "textflag.h"
+
+TEXT ·dotFloat32sSSE(SB), NOSPLIT, $16-32
+	MOVQ a+0(FP), SI
+	MOVQ b+8(FP), DI
+	MOVQ n+16(FP), CX
+
+	XORPS X0, X0
+
+loop16:
+	CMPQ CX, $16
+	JL loop4
+
+	MOVUPS 0(SI), X1
+	MOVUPS 0(DI), X2
+	MULPS X2, X1
+	ADDPS X1, X0
+
+	MOVUPS 16(SI), X1
+	MOVUPS 16(DI), X2
+	MULPS X2, X1
+	ADDPS X1, X0
+
+	MOVUPS 32(SI), X1
+	MOVUPS 32(DI), X2
+	MULPS X2, X1
+	ADDPS X1, X0
+
+	MOVUPS 48(SI), X1
+	MOVUPS 48(DI), X2
+	MULPS X2, X1
+	ADDPS X1, X0
+
+	ADDQ $64, SI
+	ADDQ $64, DI
+	SUBQ $16, CX
+	JMP loop16
+
+loop4:
+	CMPQ CX, $4
+	JL loop1
+
+	MOVUPS 0(SI), X1
+	MOVUPS 0(DI), X2
+	MULPS X2, X1
+	ADDPS X1, X0
+
+	ADDQ $16, SI
+	ADDQ $16, DI
+	SUBQ $4, CX
+	JMP loop4
+
+loop1:
+	TESTQ CX, CX
+	JE reduce
+
+	MOVSS 0(SI), X1
+	MOVSS 0(DI), X2
+	MULSS X2, X1
+	ADDSS X1, X0
+
+	ADDQ $4, SI
+	ADDQ $4, DI
+	DECQ CX
+	JMP loop1
+
+reduce:
+	MOVUPS X0, 0(SP)
+	MOVSS 0(SP), X1
+	ADDSS 4(SP), X1
+	ADDSS 8(SP), X1
+	ADDSS 12(SP), X1
+	MOVSS X1, ret+24(FP)
+	RET

@@ -1,0 +1,78 @@
+{
+  "listen": ":8080",
+  "api_keys": ["sk-local"],
+  "default_owner": "turboquant",
+  "session_header": "X-TQ-Session-ID",
+  "session_idle_ttl": "30m",
+  "backends": {
+    "ollama": {
+      "type": "ollama",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    "llama": {
+      "type": "upstream",
+      "base_url": "http://127.0.0.1:8081/v1"
+    },
+    "native-local": {
+      "type": "native",
+      "model_ids": ["TurboQuant-Local-Executor"],
+      "owned_by": "turboquant-native",
+      "executor_backend": "ollama",
+      "executor_model": "qwen2.5:7b",
+      "executor_system_prompt": "Use retrieved session memory when relevant and answer directly.",
+      "accelerator": "cuda",
+      "device": "RTX 4090",
+      "device_count": 1,
+      "total_memory_bytes": 25769803776,
+      "weights_bytes": 12884901888,
+      "max_sessions": 8,
+      "key_dim": 384,
+      "key_bits": 3,
+      "value_dim": 384,
+      "value_bits": 2,
+      "page_capacity": 4096
+    },
+    "managed-local": {
+      "type": "managed_upstream",
+      "base_url": "http://127.0.0.1:8082/v1",
+      "health_url": "http://127.0.0.1:8082/v1/models",
+      "status_url": "http://127.0.0.1:8082/v1/tq/status",
+      "checkpoint_url": "http://127.0.0.1:8082/v1/tq/checkpoints",
+      "restore_url": "http://127.0.0.1:8082/v1/tq/checkpoints/restore",
+      "command": "./local-runtime",
+      "args": ["serve", "--listen", ":8082"],
+      "capacity": {
+        "accelerator": "cuda",
+        "device": "RTX 4090",
+        "device_count": 1,
+        "total_memory_bytes": 25769803776,
+        "kv_headroom_bytes": 8589934592,
+        "max_sessions": 12
+      },
+      "startup_timeout": "60s",
+      "shutdown_timeout": "10s"
+    }
+  },
+  "models": [
+    {
+      "name": "local-chat",
+      "backend": "ollama",
+      "target": "qwen2.5:7b"
+    },
+    {
+      "name": "local-code",
+      "backend": "llama",
+      "target": "meta-llama/Llama-3.1-8B-Instruct"
+    },
+    {
+      "name": "local-native-inline",
+      "backend": "native-local",
+      "target": "TurboQuant-Local-Executor"
+    },
+    {
+      "name": "local-managed",
+      "backend": "managed-local",
+      "target": "TurboQuant-Local-Executor"
+    }
+  ]
+}

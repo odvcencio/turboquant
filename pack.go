@@ -5,6 +5,12 @@ func packedSize(count, bitWidth int) int {
 	return (count*bitWidth + 7) / 8
 }
 
+// PackedSize returns the number of bytes needed to store dim coordinates at the
+// given bit width.
+func PackedSize(dim, bitWidth int) int {
+	return packedSize(dim, bitWidth)
+}
+
 // packIndices packs count b-bit indices into dst.
 func packIndices(dst []byte, indices []int, bitWidth int) {
 	for i := range dst {

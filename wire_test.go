@@ -78,3 +78,21 @@ func TestWireRejectsWrongType(t *testing.T) {
 		t.Fatal("expected error for wrong type")
 	}
 }
+
+func TestWireEncodeRejectsWrongPackedLength(t *testing.T) {
+	expectPanic(t, func() {
+		EncodeMSE(8, 2, []byte{1}, 1)
+	})
+}
+
+func TestWireDecodeRejectsInvalidPayloadLength(t *testing.T) {
+	q := NewWithSeed(8, 2, 42)
+	vec := []float32{1, 2, 3, 4, 5, 6, 7, 8}
+	packed, norm := q.Quantize(vec)
+	encoded := EncodeMSE(8, 2, packed, norm)
+	encoded = append(encoded, 0)
+	_, _, _, _, err := DecodeMSE(encoded)
+	if err == nil {
+		t.Fatal("expected error for invalid payload length")
+	}
+}
