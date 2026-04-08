@@ -4,8 +4,10 @@ package cudaruntime
 
 /*
 #cgo pkg-config: cuda-13.0 nvrtc-13.0
+#cgo LDFLAGS: -lcublas
 #include <cuda.h>
 #include <nvrtc.h>
+#include <cublas_v2.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +21,7 @@ typedef struct {
 	CUfunction topk_fn;
 	CUfunction value_sum_fn;
 	CUfunction value_sum_batch_fn;
+	cublasHandle_t cublas_handle;
 } tq_cuda_runtime;
 
 static const char *tq_cuda_kernel =
@@ -392,6 +395,10 @@ static int tq_cuda_runtime_init(tq_cuda_runtime *out, char **err) {
 static void tq_cuda_runtime_destroy(tq_cuda_runtime *rt) {
 	if (!rt) {
 		return;
+	}
+	if (rt->cublas_handle) {
+		cublasDestroy(rt->cublas_handle);
+		rt->cublas_handle = NULL;
 	}
 	if (rt->module) {
 		cuModuleUnload(rt->module);
@@ -844,6 +851,102 @@ static int tq_cuda_launch_topk(
 	return 0;
 }
 
+static int tq_cublas_ensure_handle(tq_cuda_runtime *rt, char **err) {
+	if (rt->cublas_handle != NULL) {
+		return 0;
+	}
+	if (tq_cuda_set_current(rt, err) != 0) {
+		return 1;
+	}
+	cublasStatus_t status = cublasCreate(&rt->cublas_handle);
+	if (status != CUBLAS_STATUS_SUCCESS) {
+		tq_set_err(err, "cublasCreate failed", "could not create cuBLAS handle");
+		return 1;
+	}
+	return 0;
+}
+
+// C = A * B, all row-major. A is (m x k), B is (k x n), C is (m x n).
+static int tq_cublas_sgemm(
+	tq_cuda_runtime *rt,
+	CUdeviceptr dA, CUdeviceptr dB, CUdeviceptr dC,
+	int m, int k, int n,
+	char **err) {
+
+	if (tq_cublas_ensure_handle(rt, err) != 0) return 1;
+	if (tq_cuda_set_current(rt, err) != 0) return 1;
+
+	float alpha = 1.0f;
+	float beta = 0.0f;
+
+	// Row-major trick: C^T = B^T * A^T
+	// Reinterpreting row-major as column-major is a transpose.
+	// So we call cublasSgemm with swapped operands, no transpose flags.
+	cublasStatus_t status = cublasSgemm(
+		rt->cublas_handle,
+		CUBLAS_OP_N, CUBLAS_OP_N,
+		n, m, k,
+		&alpha,
+		(const float *)(uintptr_t)dB, n,
+		(const float *)(uintptr_t)dA, k,
+		&beta,
+		(float *)(uintptr_t)dC, n
+	);
+
+	if (status != CUBLAS_STATUS_SUCCESS) {
+		tq_set_err(err, "cublasSgemm failed", "sgemm returned error");
+		return 1;
+	}
+
+	CUresult res = cuCtxSynchronize();
+	if (res != CUDA_SUCCESS) {
+		tq_set_cuda_err(err, "cuCtxSynchronize after sgemm failed", res);
+		return 1;
+	}
+	return 0;
+}
+
+// C = A * B^T, row-major. A is (m x k), B is (n x k), C is (m x n).
+static int tq_cublas_sgemm_transb(
+	tq_cuda_runtime *rt,
+	CUdeviceptr dA, CUdeviceptr dB, CUdeviceptr dC,
+	int m, int k, int n,
+	char **err) {
+
+	if (tq_cublas_ensure_handle(rt, err) != 0) return 1;
+	if (tq_cuda_set_current(rt, err) != 0) return 1;
+
+	float alpha = 1.0f;
+	float beta = 0.0f;
+
+	// C = A * B^T in row-major.
+	// C^T = (B^T)^T * A^T = B * A^T in column-major.
+	// B is (n x k) row-major = (k x n) col-major. We need B not transposed: CUBLAS_OP_T on col-major B.
+	// A is (m x k) row-major = (k x m) col-major. We need A^T: CUBLAS_OP_N on col-major A.
+	cublasStatus_t status = cublasSgemm(
+		rt->cublas_handle,
+		CUBLAS_OP_T, CUBLAS_OP_N,
+		n, m, k,
+		&alpha,
+		(const float *)(uintptr_t)dB, k,
+		(const float *)(uintptr_t)dA, k,
+		&beta,
+		(float *)(uintptr_t)dC, n
+	);
+
+	if (status != CUBLAS_STATUS_SUCCESS) {
+		tq_set_err(err, "cublasSgemm_transb failed", "sgemm returned error");
+		return 1;
+	}
+
+	CUresult res = cuCtxSynchronize();
+	if (res != CUDA_SUCCESS) {
+		tq_set_cuda_err(err, "cuCtxSynchronize after sgemm_transb failed", res);
+		return 1;
+	}
+	return 0;
+}
+
 */
 import "C"
 
@@ -1139,6 +1242,42 @@ func (r *Runtime) LaunchTopK(scores, ranks, outIndices, outScores DevicePtr, cou
 		C.uint(count),
 		C.uint(k),
 		C.uint(queryCount),
+		&cerr,
+	) != 0 {
+		defer C.free(unsafe.Pointer(cerr))
+		return fmt.Errorf("%s", C.GoString(cerr))
+	}
+	return nil
+}
+
+// LaunchSgemm computes C = A * B on GPU using cuBLAS.
+// A is (m x k), B is (k x n), C is (m x n). All row-major float32.
+func (r *Runtime) LaunchSgemm(dA, dB, dC DevicePtr, m, k, n int) error {
+	var cerr *C.char
+	if C.tq_cublas_sgemm(
+		&r.rt,
+		C.CUdeviceptr(dA),
+		C.CUdeviceptr(dB),
+		C.CUdeviceptr(dC),
+		C.int(m), C.int(k), C.int(n),
+		&cerr,
+	) != 0 {
+		defer C.free(unsafe.Pointer(cerr))
+		return fmt.Errorf("%s", C.GoString(cerr))
+	}
+	return nil
+}
+
+// LaunchSgemmTransB computes C = A * B^T on GPU using cuBLAS.
+// A is (m x k), B is (n x k), C is (m x n). All row-major float32.
+func (r *Runtime) LaunchSgemmTransB(dA, dB, dC DevicePtr, m, k, n int) error {
+	var cerr *C.char
+	if C.tq_cublas_sgemm_transb(
+		&r.rt,
+		C.CUdeviceptr(dA),
+		C.CUdeviceptr(dB),
+		C.CUdeviceptr(dC),
+		C.int(m), C.int(k), C.int(n),
 		&cerr,
 	) != 0 {
 		defer C.free(unsafe.Pointer(cerr))
