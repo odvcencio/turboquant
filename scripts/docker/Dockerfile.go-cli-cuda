@@ -1,0 +1,20 @@
+FROM nvidia/cuda:13.0.1-devel-ubuntu24.04
+
+ARG GO_VERSION=1.25.1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bash build-essential ca-certificates curl git pkg-config time \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+        amd64) goarch=amd64 ;; \
+        arm64) goarch=arm64 ;; \
+        *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${goarch}.tar.gz" | tar -C /usr/local -xz
+
+ENV PATH=/usr/local/go/bin:$PATH
+ENV PKG_CONFIG_PATH=/usr/local/cuda/lib64/pkgconfig
+
+WORKDIR /workspace

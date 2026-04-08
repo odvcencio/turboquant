@@ -1,0 +1,14 @@
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bash build-essential ca-certificates git time \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    accelerate \
+    'kernels>=0.12.0' \
+    safetensors \
+    sentencepiece \
+    transformers
+
+WORKDIR /workspace
