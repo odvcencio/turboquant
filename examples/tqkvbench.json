@@ -1,0 +1,60 @@
+{
+  "runs": [
+    {
+      "name": "llama-upstream",
+      "model": "/absolute/path/to/model.gguf",
+      "perplexity_bin": "/absolute/path/to/llama.cpp/build/bin/llama-perplexity",
+      "bench_bin": "/absolute/path/to/llama.cpp/build/bin/llama-bench",
+      "baseline": "f16",
+      "kv_types": [
+        { "name": "f16", "type_k": "f16", "type_v": "f16" },
+        { "name": "q8_0", "type_k": "q8_0", "type_v": "q8_0" },
+        { "name": "q4_0", "type_k": "q4_0", "type_v": "q4_0" }
+      ],
+      "perplexity": {
+        "dataset": "/absolute/path/to/wikitext-2-raw/wiki.test.raw",
+        "ctx_sizes": [8192, 32768, 131072],
+        "batch_size": 512,
+        "chunks": 4,
+        "extra_args": ["-ngl", "99"]
+      },
+      "bench": {
+        "n_prompt": [512],
+        "n_gen": [128],
+        "n_depth": [0, 8192, 32768, 131072],
+        "repetitions": 3,
+        "batch_size": 2048,
+        "ubatch_size": 512,
+        "extra_args": ["-ngl", "99", "-fa", "1"]
+      }
+    },
+    {
+      "name": "turboquant-fork",
+      "model": "/absolute/path/to/model.gguf",
+      "perplexity_bin": "/absolute/path/to/llama-cpp-turboquant/build/bin/llama-perplexity",
+      "bench_bin": "/absolute/path/to/llama-cpp-turboquant/build/bin/llama-bench",
+      "baseline": "q8_0",
+      "kv_types": [
+        { "name": "q8_0", "type_k": "q8_0", "type_v": "q8_0" },
+        { "name": "turbo3", "type_k": "q8_0", "type_v": "turbo3" },
+        { "name": "turbo4", "type_k": "q8_0", "type_v": "turbo4" }
+      ],
+      "perplexity": {
+        "dataset": "/absolute/path/to/wikitext-2-raw/wiki.test.raw",
+        "ctx_sizes": [8192, 32768, 131072],
+        "batch_size": 512,
+        "chunks": 4,
+        "extra_args": ["-ngl", "99"]
+      },
+      "bench": {
+        "n_prompt": [512],
+        "n_gen": [128],
+        "n_depth": [0, 8192, 32768, 131072],
+        "repetitions": 3,
+        "batch_size": 2048,
+        "ubatch_size": 512,
+        "extra_args": ["-ngl", "99", "-fa", "1"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+Summarize this deployment incident in three bullet points: the canary rollout succeeded in staging, failed in production after ten minutes, and was rolled back because a background job doubled database write traffic and pushed API latency above the SLO.
+
+Read this product brief and list the constraints that matter most for implementation: the feature must work offline after first sync, preserve existing file formats, avoid schema migrations during the beta, and keep median startup time under two seconds on a mid-range laptop.
+
+Convert this request into a SQL query: show the five customers with the highest total paid invoice amount in the last ninety days, including customer id, company name, invoice count, and total revenue, sorted from highest to lowest revenue.
+
+You are reviewing an API change. Compare option A, which adds one optional field to the existing response, with option B, which introduces a new versioned endpoint. Explain the compatibility tradeoffs and recommend one option for a team that values low operational risk.
+
+Translate this paragraph into Spanish but keep technical terms in English: the service maintains a local cache of model metadata, refreshes it lazily on first use, and retries failed downloads with exponential backoff to avoid saturating the upstream.
+
+Given this bug report, produce the likely root cause and the next debugging step: users can sign in from the web app, but mobile sign-in fails only after a password reset; server logs show the refresh token exchange returns 401 while the initial credential check succeeds.
+
+Write five targeted test cases for a function that merges two sorted lists of time ranges, coalesces overlaps, preserves adjacent ranges as separate intervals, and rejects any interval whose end is earlier than its start.
+
+Classify this support ticket by severity, likely owner, and next action: a customer reports that exports complete successfully for small datasets but the job is killed when the dataset exceeds about two million rows, and they need a workaround before tomorrow morning.

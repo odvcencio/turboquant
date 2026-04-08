@@ -1,0 +1,5 @@
+Summarize TurboQuant's current serving architecture in three bullet points.
+
+What state does tqserve keep per session, and how is that state stored?
+
+Give one reason to use the native backend and one reason to use the upstream backend.
