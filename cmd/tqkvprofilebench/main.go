@@ -684,9 +684,9 @@ func (a *layerAccumulator) summary() layerRuntimeSummary {
 	out.MeanAttentionDurationMS = nsToMS(a.sumAttentionNS / float64(a.count))
 	out.MeanAppendLayerTokensPerSec = a.sumAppendRate / float64(a.count)
 	out.MeanAttentionQueriesPerSec = a.sumAttentionQPS / float64(a.count)
-	if out.MeanQuantStorageBytes > 0 {
-		out.CompressionVsFP32 = out.MeanRawFP32Bytes / out.MeanQuantStorageBytes
-		out.CompressionVsFP16 = out.MeanRawFP16Bytes / out.MeanQuantStorageBytes
+	if out.MeanQuantLiveBytes > 0 {
+		out.CompressionVsFP32 = out.MeanRawFP32Bytes / out.MeanQuantLiveBytes
+		out.CompressionVsFP16 = out.MeanRawFP16Bytes / out.MeanQuantLiveBytes
 	}
 	return out
 }
@@ -738,9 +738,9 @@ func (a *summaryAccumulator) summary() benchSummary {
 	out.MeanAppendLayerTokensPerSec = a.sumAppendRate / float64(a.count)
 	out.MeanAttentionQueriesPerSec = a.sumAttentionQPS / float64(a.count)
 	out.MeanGroupsPerSec = a.sumGroupRate / float64(a.count)
-	if out.MeanQuantStorageBytes > 0 {
-		out.CompressionVsFP32 = out.MeanRawFP32Bytes / out.MeanQuantStorageBytes
-		out.CompressionVsFP16 = out.MeanRawFP16Bytes / out.MeanQuantStorageBytes
+	if out.MeanQuantLiveBytes > 0 {
+		out.CompressionVsFP32 = out.MeanRawFP32Bytes / out.MeanQuantLiveBytes
+		out.CompressionVsFP16 = out.MeanRawFP16Bytes / out.MeanQuantLiveBytes
 	}
 	return out
 }
