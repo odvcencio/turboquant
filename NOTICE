@@ -1,0 +1,8 @@
+TurboQuant
+Copyright 2025-2026 Oscar Villavicencio / M31 Labs (m31labs.dev)
+
+TurboQuant is an implementation of MSE-optimal vector quantization for
+transformer KV cache compression. Based on research described in
+arXiv:2504.19874.
+
+This product includes software developed by M31 Labs (https://m31labs.dev).
