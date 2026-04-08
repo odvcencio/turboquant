@@ -89,6 +89,7 @@ func TestKVCachePageAttentionOutputPreparedIntoMatchesAllocatingAPI(t *testing.T
 }
 
 func TestKVCachePageAttentionOutputPreparedIntoZeroAllocs(t *testing.T) {
+	skipAllocsUnderRace(t)
 	page := NewKVCachePageWithSeed(32, 3, 32, 2, 4, 42)
 	rng := newTestRNG()
 	for i := 0; i < 64; i++ {
@@ -145,6 +146,7 @@ func TestKVCachePageAttentionOutputPreparedBatchIntoMatchesSingleQueryAPI(t *tes
 }
 
 func TestKVCachePageAttentionOutputPreparedBatchIntoZeroAllocs(t *testing.T) {
+	skipAllocsUnderRace(t)
 	page := NewKVCachePageWithSeed(32, 3, 32, 2, 4, 42)
 	rng := newTestRNG()
 	for i := 0; i < 64; i++ {

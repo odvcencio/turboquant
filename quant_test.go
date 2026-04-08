@@ -157,6 +157,7 @@ func TestQuantizeToRoundTrip(t *testing.T) {
 }
 
 func TestQuantizeToZeroAllocs(t *testing.T) {
+	skipAllocsUnderRace(t)
 	q := NewHadamardWithSeed(128, 3, 42)
 	rng := rand.New(rand.NewSource(66))
 	x := randomUnitVector(128, rng)
@@ -173,6 +174,7 @@ func TestQuantizeToZeroAllocs(t *testing.T) {
 }
 
 func TestDequantizeToZeroAllocs(t *testing.T) {
+	skipAllocsUnderRace(t)
 	q := NewHadamardWithSeed(128, 3, 42)
 	rng := rand.New(rand.NewSource(66))
 	x := randomUnitVector(128, rng)

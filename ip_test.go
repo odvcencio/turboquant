@@ -129,6 +129,7 @@ func TestIPPreparedQueryNonByteAlignedDim(t *testing.T) {
 }
 
 func TestIPPreparedQueryZeroAllocs(t *testing.T) {
+	skipAllocsUnderRace(t)
 	q := NewIPHadamardWithSeed(128, 3, 42)
 	rng := rand.New(rand.NewSource(55))
 	x := randomUnitVector(128, rng)
@@ -177,6 +178,7 @@ func TestPrepareQueryLegacyBufferStillWorks(t *testing.T) {
 }
 
 func TestPrepareQueryToZeroAllocs(t *testing.T) {
+	skipAllocsUnderRace(t)
 	q := NewIPHadamardWithSeed(128, 3, 42)
 	rng := rand.New(rand.NewSource(88))
 	y := randomUnitVector(128, rng)
@@ -246,6 +248,7 @@ func TestIPPreparedBatchTrustedMatchesSingleScores(t *testing.T) {
 }
 
 func TestIPPreparedBatchTrustedZeroAllocs(t *testing.T) {
+	skipAllocsUnderRace(t)
 	q := NewIPHadamardWithSeed(128, 3, 42)
 	rng := rand.New(rand.NewSource(90))
 	x := randomUnitVector(128, rng)
@@ -271,6 +274,7 @@ func TestIPPreparedBatchTrustedZeroAllocs(t *testing.T) {
 }
 
 func TestIPQuantizeToZeroAllocs(t *testing.T) {
+	skipAllocsUnderRace(t)
 	q := NewIPHadamardWithSeed(128, 3, 42)
 	rng := rand.New(rand.NewSource(55))
 	x := randomUnitVector(128, rng)

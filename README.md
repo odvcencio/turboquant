@@ -326,6 +326,314 @@ and a restore request looks like:
 This is the serving layer we can keep stable while adding a native
 TurboQuant-backed executor for consumer GPUs.
 
+### Session-Memory Eval Harness
+
+[`cmd/tqeval`](/home/draco/work/turboquant/cmd/tqeval/main.go) is an eval
+harness for the current `tqserve` session-memory layer. It runs the same
+multi-turn prompt set against two OpenAI-compatible targets:
+
+- a direct local runtime such as `llama-server`
+- `tqserve` with the `native` backend delegating final generation to that same
+  local runtime
+
+What it measures today:
+
+- per-turn latency
+- response size/content previews
+- optional `tqserve` status and session snapshots
+
+What it does not measure:
+
+- real transformer KV-cache quality against `llama.cpp` KV quantization
+- perplexity
+- memory use at `32K` / `64K` / `128K` context
+- long-context quality retention under real model attention
+
+That benchmark still requires an end-to-end runtime integration path that feeds
+live model K/V tensors through TurboQuant during generation. This repo now has
+a native transformer-layer KV cache API for real per-head K/V tensors, but
+`tqserve` is not wired to that path yet.
+
+Use `cmd/tqeval` with a JSON config to drive the same prompts through both
+targets and capture the current session-memory behavior:
+
+```bash
+go run ./cmd/tqeval --config ./examples/tqeval.json --out ./tqeval-report.json
+```
+
+The example config compares a direct `llama.cpp`-compatible `/v1` endpoint with
+`tqserve`'s native session-memory route:
+
+```json
+{
+  "prompts_file": "./examples/tqeval_prompts.txt",
+  "targets": [
+    {
+      "name": "direct-llama",
+      "base_url": "http://127.0.0.1:8081/v1",
+      "model": "meta-llama/Llama-3.1-8B-Instruct"
+    },
+    {
+      "name": "turbo-native",
+      "base_url": "http://127.0.0.1:8080/v1",
+      "model": "local-native-inline",
+      "session_header": "X-TQ-Session-ID",
+      "session_id": "tqeval-demo",
+      "status_url": "http://127.0.0.1:8080/v1/tq/status",
+      "sessions_url": "http://127.0.0.1:8080/v1/tq/sessions"
+    }
+  ]
+}
+```
+
+### `llama.cpp` KV Benchmark Harness
+
+For real KV-cache benchmarking against `llama.cpp`, use
+[`cmd/tqkvbench`](/home/draco/work/turboquant/cmd/tqkvbench/main.go).
+It drives external `llama-perplexity` and `llama-bench` binaries, then records:
+
+- perplexity by context size
+- KV cache memory from `llama_kv_cache_init` logs
+- prompt and generation throughput from `llama-bench -o json`
+- baseline deltas within each run
+
+This is the honest benchmark path for:
+
+- stock `llama.cpp` KV types such as `f16`, `q8_0`, `q4_0`, `iq4_nl`
+- TurboQuant-enabled forks that expose `turbo3`, `turbo4`, or similar KV types
+
+Example:
+
+```bash
+go run ./cmd/tqkvbench --config ./examples/tqkvbench.json --out ./tqkvbench-report.json
+```
+
+The example config includes:
+
+- one stock upstream `llama.cpp` run
+- one TurboQuant-fork run
+- long-context perplexity checkpoints at `8K`, `32K`, and `128K`
+- throughput measurements at matching prefill depths
+
+### Offline Transformer KV Capture Eval
+
+For native per-layer K/V ingestion without a live runtime hook yet, use
+[`cmd/tqkveval`](/home/draco/work/turboquant/cmd/tqkveval/main.go). It reads a
+captured transformer-layer attention state, ingests the real query/K/V tensors
+into [`TransformerLayerKVCache`](/home/draco/work/turboquant/transformer_kv.go),
+and reports exact-vs-approximate attention reconstruction metrics for either
+TurboQuant or a uniform scalar baseline.
+
+Example:
+
+```bash
+go run ./cmd/tqkveval \
+  --input ./examples/tqkveval_capture.json \
+  --method turboquant \
+  --key-bits 3 \
+  --value-bits 2 \
+  --top-k 2 \
+  --out ./tqkveval-report.json
+```
+
+The input format is plain JSON so captures from Python, Go, or another runtime
+can be dumped directly without extra tooling:
+
+- `query`: one flattened `[heads*head_dim]` query tensor
+- `keys`: flattened token-major `[tokens*heads*head_dim]` key tensor
+- `values`: flattened token-major `[tokens*heads*head_dim]` value tensor
+- optional `name`, explicit `tokens`, and `query_scale`
+
+If `query_scale` is present in the capture, `tqkveval` and `tqkvsweep` will use
+it automatically unless you pass `--query-scale` to override it.
+
+Supported offline evaluation methods are:
+
+- `turboquant`: the repo's existing Lloyd-Max plus IP-aware quantization path
+- `uniform`: a uniform scalar baseline over per-vector normalized coordinates,
+  using the same bit budgets and per-vector norm storage
+
+To compare multiple TurboQuant settings on the same captured layer, use
+[`cmd/tqkvsweep`](/home/draco/work/turboquant/cmd/tqkvsweep/main.go):
+
+```bash
+go run ./cmd/tqkvsweep \
+  --input ./examples/tqkveval_capture.json \
+  --methods turboquant,uniform \
+  --key-bits 2,3,4 \
+  --value-bits 2,3,4 \
+  --top-k 1,2,3 \
+  --out ./tqkvsweep-report.json
+```
+
+That produces one report per sample with:
+
+- preserved sample metadata such as `model`, `prompt_index`, `layer`, and
+  `token_index` when present in the capture file
+- all evaluated `(method, key_bits, value_bits, top_k)` cases
+- best reconstruction by MSE
+- best reconstruction by cosine similarity
+- smallest cache footprint among evaluated cases
+- an aggregate `configurations` section summarizing mean/p50/p95 MSE, cosine,
+  cache bytes, compression ratio, and per-sample win counts for each evaluated
+  setting across the whole capture file
+- a top-level `pareto_frontier` section containing the non-dominated
+  quality/compression tradeoffs by mean storage bytes and mean MSE
+
+For real-model captures, use the optional helper script
+[`scripts/export_hf_llama_kv_capture.py`](/home/draco/work/turboquant/scripts/export_hf_llama_kv_capture.py).
+It targets Hugging Face Llama-style models and emits the JSON capture format
+consumed by both CLIs:
+
+```bash
+python3 ./scripts/export_hf_llama_kv_capture.py \
+  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+  --prompt "Summarize the deployment plan." \
+  --layer 0 \
+  --out ./layer0.json
+```
+
+The exporter can also emit a whole capture file in one run by combining
+multiple prompts, layers, or token positions:
+
+```bash
+python3 ./scripts/export_hf_llama_kv_capture.py \
+  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+  --prompt-file ./prompts.txt \
+  --layer 0,8,16 \
+  --token-index last,-8 \
+  --out ./captures.json
+```
+
+That `captures.json` file can go straight into `tqkvsweep`, which will now
+report both per-sample results and aggregate per-configuration summaries across
+the whole capture set.
+
+For bounded Docker runs with `gotreesitter`-style artifacts and OOM metadata,
+use the helper scripts:
+
+```bash
+bash ./scripts/run_hf_kv_export_in_docker.sh \
+  --label llama32-1b \
+  --memory 16g \
+  -- --model meta-llama/Llama-3.2-1B \
+     --prompt "Summarize the deployment plan." \
+     --layer 0,8,16 \
+     --token-index last \
+     --dtype float16 \
+     --out /workspace/captures.json
+
+bash ./scripts/run_tqkvsweep_in_docker.sh \
+  --label llama32-1b-sweep \
+  --memory 12g \
+  -- --input ./captures.json \
+     --out ./tqkvsweep-report.json
+
+bash ./scripts/run_tqkvsweep_in_docker.sh \
+  --gpu \
+  --label qwen3-gpu-sweep \
+  --memory 12g \
+  -- --input ./captures.json \
+     --out ./tqkvsweep-report-gpu.json
+```
+
+Both scripts write `container.log`, `inspect.json`, and `metadata.txt` under
+`~/work/gotreesitter/harness_out/docker/<timestamp>-<label>/`, including
+whether Docker marked the run as `OOMKilled`.
+
+`run_tqkvsweep_in_docker.sh --gpu` builds the CUDA-tagged `tqkvsweep` binary in
+a CUDA development image, passes the CLI `--gpu` flag automatically, and falls
+back to CPU per configuration when the current GPU scorer does not support that
+key bit-width yet.
+
+To turn a `tqkvsweep` report into a layer-by-layer allocation plan, use
+[`cmd/tqkvprofile`](/home/draco/work/turboquant/cmd/tqkvprofile/main.go):
+
+```bash
+go run ./cmd/tqkvprofile \
+  --input ./tqkvsweep-report.json \
+  --method turboquant \
+  --min-mean-compression 8 \
+  --out ./tqkvprofile.json
+```
+
+Or, if you want the smallest layer configs that still clear a quality floor:
+
+```bash
+go run ./cmd/tqkvprofile \
+  --input ./tqkvsweep-report.json \
+  --method turboquant \
+  --min-mean-cosine 0.70 \
+  --min-p05-cosine 0.50 \
+  --out ./tqkvprofile.json
+```
+
+Or, if you want a late-context-safe profile from the same sweep report:
+
+```bash
+go run ./cmd/tqkvprofile \
+  --input ./tqkvsweep-report.json \
+  --method turboquant \
+  --token-position last \
+  --min-mean-cosine 0.65 \
+  --min-p05-cosine 0.55 \
+  --out ./tqkvprofile-last.json
+```
+
+Or, if you want both the overall and late-context profiles in one file:
+
+```bash
+go run ./cmd/tqkvprofile \
+  --input ./tqkvsweep-report.json \
+  --method turboquant \
+  --profile-set all,last \
+  --min-mean-cosine 0.65 \
+  --min-p05-cosine 0.50 \
+  --out ./tqkvprofile-bundle.json
+```
+
+That emits:
+
+- one chosen `(key_bits, value_bits, top_k)` setting per layer
+- aggregate quality and storage for the selected plan
+- a runtime-ready `profiles` array of
+  [`TransformerLayerKVProfile`](/home/draco/work/turboquant/transformer_model_kv.go)
+  entries you can feed into a heterogeneous multi-layer KV stack
+- native `kv_heads` for GQA models, so runtime profiles preserve the real KV
+  cache shape instead of expanding to query-head count
+
+To turn one of those emitted profile files back into a runtime-shaped bench over
+real captured K/V tensors, use
+[`cmd/tqkvprofilebench`](/home/draco/work/turboquant/cmd/tqkvprofilebench/main.go):
+
+```bash
+go run ./cmd/tqkvprofilebench \
+  --capture ./captures.json \
+  --profile ./tqkvprofile-bundle.json \
+  --profile-set all,last \
+  --warmup 1 \
+  --iterations 3 \
+  --out ./tqkvprofilebench.json
+```
+
+That replays complete capture groups through the selected runtime profile and
+reports:
+
+- quantized KV live/storage bytes versus raw `fp32` and estimated `fp16`
+- append throughput on the real TurboQuant KV-cache path
+- attention-query throughput for the selected `(key_bits, value_bits, top_k)`
+- optional GPU-key upload timing when `--gpu` is enabled
+
+To turn a `tqkvsweep` report into a smaller comparison digest with overall,
+per-method, per-layer, per-token, and relative-position frontiers, use
+[`cmd/tqkvsummarize`](/home/draco/work/turboquant/cmd/tqkvsummarize/main.go):
+
+```bash
+go run ./cmd/tqkvsummarize \
+  --input ./tqkvsweep-report.json \
+  --out ./tqkvsweep-summary.json
+```
+
 ### Quantized KV cache pages
 
 TurboQuant now includes an append-only quantized KV page API for local-model
@@ -349,6 +657,25 @@ _ = weights
 if err := page.EnableGPUKeys(); err == nil {
     positions, weights = page.AttentionOutputPreparedTo(out, pq, 16)
 }
+```
+
+For real transformer layers, use
+[`TransformerLayerKVCache`](/home/draco/work/turboquant/transformer_kv.go) for
+one layer or
+[`TransformerModelKVCache`](/home/draco/work/turboquant/transformer_model_kv.go)
+to assign different bit widths per layer:
+
+```go
+profiles := []turboquant.TransformerLayerKVProfile{
+    {Layer: 0, Heads: 32, KVHeads: 8, HeadDim: 128, KeyBits: 2, ValueBits: 3, Capacity: 4096, Seed: 11},
+    {Layer: 15, Heads: 32, KVHeads: 8, HeadDim: 128, KeyBits: 4, ValueBits: 4, Capacity: 4096, Seed: 29},
+    {Layer: 31, Heads: 32, KVHeads: 8, HeadDim: 128, KeyBits: 4, ValueBits: 4, Capacity: 4096, Seed: 47},
+}
+
+stack := turboquant.NewTransformerModelKVCache(profiles)
+stack.Append(0, layer0Keys, layer0Values)
+stack.Append(15, layer15Keys, layer15Values)
+stack.Append(31, layer31Keys, layer31Values)
 ```
 
 For repeated local-model loops, use the caller-owned attention path to avoid
@@ -545,12 +872,12 @@ Benchmarks on Intel Core Ultra 9 285, pure Go with amd64 SSE row-dot kernels
 
 | Operation | dim=384 | Allocations |
 |-----------|---------|-------------|
-| QuantizeTo (2-bit MSE, default hadamard) | 2.3 us | 0 allocs |
-| DequantizeTo (2-bit MSE, default hadamard) | 1.5 us | 0 allocs |
+| QuantizeTo (2-bit MSE, default hadamard) | 3.1 us | 0 allocs |
+| DequantizeTo (2-bit MSE, default hadamard) | 2.0 us | 0 allocs |
 | Quantize (3-bit IP, default hadamard) | 11.1 us | 1 alloc |
-| InnerProduct (3-bit IP, default hadamard) | 8.3 us | 0 allocs |
-| PrepareQueryTo (3-bit IP, default hadamard) | 20.6 us | 0 allocs |
-| PreparedQuery score (3-bit IP, default hadamard) | 53 ns | 0 allocs |
+| InnerProduct (3-bit IP, default hadamard) | 11.0 us | 0 allocs |
+| PrepareQueryTo (3-bit IP, default hadamard) | 29.2 us | 0 allocs |
+| PreparedQuery score (3-bit IP, default hadamard) | 70.7 ns | 0 allocs |
 
 ## Panic conditions
 
