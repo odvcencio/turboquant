@@ -24,7 +24,7 @@ func TestDotFloat32sMatchesScalar(t *testing.T) {
 			a[i] = float32(rng.NormFloat64())
 			b[i] = float32(rng.NormFloat64())
 		}
-		got := dotFloat32s(a, b)
+		got := DotFloat32s(a, b)
 		want := dotFloat32sScalar(a, b)
 		diff := math.Abs(float64(got - want))
 		limit := 1e-4 * math.Max(1, math.Abs(float64(want)))

@@ -57,7 +57,7 @@ func qjlProject(signs []byte, x, projMatrix []float32, dim int) float32 {
 	}
 	for i := fullBytes * 8; i < dim; i++ {
 		row := i * dim
-		if dotFloat32s(projMatrix[row:row+dim], x) >= 0 {
+		if DotFloat32s(projMatrix[row:row+dim], x) >= 0 {
 			signs[i/8] |= 1 << uint(i%8)
 		}
 	}
@@ -98,7 +98,7 @@ func qjlInnerProduct(signs []byte, resNorm float32, y, projMatrix []float32, dim
 	}
 	for i := fullBytes * 8; i < dim; i++ {
 		row := i * dim
-		dot := dotFloat32s(projMatrix[row:row+dim], y)
+		dot := DotFloat32s(projMatrix[row:row+dim], y)
 		if signs[i/8]&(1<<uint(i%8)) != 0 {
 			sum += dot
 		} else {

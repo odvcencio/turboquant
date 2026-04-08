@@ -15,10 +15,10 @@ func dotFloat32Rows4(dst *[4]float32, rows, vec []float32) {
 	if len(rows) < 4*n {
 		panic("turboquant: dotFloat32Rows4 row block too short")
 	}
-	dst[0] = dotFloat32s(rows[0:n], vec)
-	dst[1] = dotFloat32s(rows[n:2*n], vec)
-	dst[2] = dotFloat32s(rows[2*n:3*n], vec)
-	dst[3] = dotFloat32s(rows[3*n:4*n], vec)
+	dst[0] = DotFloat32s(rows[0:n], vec)
+	dst[1] = DotFloat32s(rows[n:2*n], vec)
+	dst[2] = DotFloat32s(rows[2*n:3*n], vec)
+	dst[3] = DotFloat32s(rows[3*n:4*n], vec)
 }
 
 func dotFloat32Rows8(dst *[8]float32, rows, vec []float32) {

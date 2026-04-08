@@ -394,7 +394,7 @@ func (q *IPQuantizer) PrepareQueryToTrusted(dst *PreparedQuery, y []float32) {
 		var dots [8]float32
 		for bit := 0; bit < width; bit++ {
 			row := (base + bit) * q.dim
-			dots[bit] = dotFloat32s(q.proj[row:row+q.dim], y)
+			dots[bit] = DotFloat32s(q.proj[row:row+q.dim], y)
 		}
 		table := dst.signLUT[byteIdx*256 : (byteIdx+1)*256]
 		fillPreparedSignTable(table, dots[:width])

@@ -7,9 +7,9 @@ import "unsafe"
 //go:noescape
 func dotFloat32sSSE(a, b *float32, n int) float32
 
-func dotFloat32s(a, b []float32) float32 {
+func DotFloat32s(a, b []float32) float32 {
 	if len(a) != len(b) {
-		panic("turboquant: dotFloat32s length mismatch")
+		panic("turboquant: DotFloat32s length mismatch")
 	}
 	if len(a) == 0 {
 		return 0
