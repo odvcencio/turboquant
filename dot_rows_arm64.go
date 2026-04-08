@@ -1,6 +1,14 @@
-//go:build !amd64 && !arm64
+//go:build arm64
 
 package turboquant
+
+import "unsafe"
+
+//go:noescape
+func dotFloat32Rows8NEON(rows, vec *float32, n int, dst *float32)
+
+//go:noescape
+func dotFloat32Rows8BlockedNEON(rows, vec *float32, n int, dst *float32)
 
 func dotFloat32Rows4(dst *[4]float32, rows, vec []float32) {
 	n := len(vec)
@@ -18,9 +26,13 @@ func dotFloat32Rows8(dst *[8]float32, rows, vec []float32) {
 	if len(rows) < 8*n {
 		panic("turboquant: dotFloat32Rows8 row block too short")
 	}
-	for row := 0; row < 8; row++ {
-		dst[row] = dotFloat32s(rows[row*n:(row+1)*n], vec)
+	if n == 0 {
+		for i := range dst {
+			dst[i] = 0
+		}
+		return
 	}
+	dotFloat32Rows8NEON(unsafe.SliceData(rows), unsafe.SliceData(vec), n, &dst[0])
 }
 
 func dotFloat32Rows8Blocked(dst *[8]float32, rows, vec []float32) {
@@ -28,22 +40,11 @@ func dotFloat32Rows8Blocked(dst *[8]float32, rows, vec []float32) {
 	if len(rows) < 8*n {
 		panic("turboquant: dotFloat32Rows8Blocked row block too short")
 	}
-	for i := range dst {
-		dst[i] = 0
-	}
-	offset := 0
-	for col := 0; col < n; col += 4 {
-		width := 4
-		if rem := n - col; rem < width {
-			width = rem
+	if n == 0 {
+		for i := range dst {
+			dst[i] = 0
 		}
-		for row := 0; row < 8; row++ {
-			var sum float32
-			for j := 0; j < width; j++ {
-				sum += rows[offset+row*4+j] * vec[col+j]
-			}
-			dst[row] += sum
-		}
-		offset += 8 * 4
+		return
 	}
+	dotFloat32Rows8BlockedNEON(unsafe.SliceData(rows), unsafe.SliceData(vec), n, &dst[0])
 }
