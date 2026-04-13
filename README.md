@@ -1,14 +1,56 @@
 # TurboQuant
 
-Standalone Go implementation of the TurboQuant MSE-optimal and inner-product-preserving vector quantization algorithm ([arXiv 2504.19874](https://arxiv.org/abs/2504.19874)). Extracted from [GoSX](https://github.com/odvcencio/gosx), where it powers CRDT vector sync, in-memory semantic search, and real-time 3D mesh compression.
+Go implementation of the TurboQuant MSE-optimal and inner-product-preserving
+vector quantization algorithm ([arXiv 2504.19874](https://arxiv.org/abs/2504.19874)).
 
-Compresses float32 vectors to 1-8 bits per dimension with provably near-optimal distortion. The only Go implementation of TurboQuant. Zero external dependencies. Thread-safe after construction. Deterministic with seed. Compiles to WASM.
+TurboQuant compresses float32 vectors to 1-8 bits per dimension, supports
+direct inner-product estimates on quantized vectors, and can run without CGo.
+Quantizers are thread-safe after construction, deterministic with a seed, and
+available on `js/wasm`.
 
 ## Install
 
 ```
-go get github.com/odvcencio/turboquant@v0.1.0
+go get github.com/odvcencio/turboquant@v0.1.2
 ```
+
+Requires Go 1.25.1 or newer.
+
+## Package surface
+
+- `Quantizer`: MSE-oriented vector quantization, reconstruction, direct inner
+  products, batch helpers, deterministic seeded construction, and caller-owned
+  buffer APIs.
+- `IPQuantizer`: inner-product-preserving quantization with prepared-query
+  scoring for repeated search against a quantized corpus.
+- `GPUPreparedScorer`: optional WebGPU (`js/wasm`) and CUDA (`linux/amd64`
+  with `cgo` and `cuda`) prepared-query scoring and top-k search.
+- `KVCachePage`: append-only quantized key/value pages with CPU scoring,
+  optional GPU key/value upload, binary serialization, and caller-owned
+  attention-output paths.
+- `TransformerLayerKVCache` and `TransformerModelKVCache`: per-layer and
+  multi-layer transformer KV caches with heterogeneous bit-width profiles.
+- `QuantizerSpec`, portable quantizer serialization, `PackIndices`, and
+  `UnpackIndices`: interop surfaces for non-Go consumers or custom storage
+  layouts.
+- `DotFloat32s`: exported SIMD-backed float32 dot product on supported CPU
+  architectures, with a generic fallback.
+- CUDA dense helpers behind `-tags cuda`: `DenseMatmul`,
+  `DenseMatmulTransB`, and `GPUDenseContext` for repeated GPU-resident weight
+  matmuls.
+
+## CLI tools
+
+| Command | Purpose |
+|---------|---------|
+| `cmd/tqserve` | OpenAI-compatible local server with backend routing, sessions, checkpoints, and metrics |
+| `cmd/tqeval` | Session-memory comparison harness for OpenAI-compatible targets |
+| `cmd/tqkvbench` | Driver for external KV-cache perplexity and throughput benchmarks |
+| `cmd/tqkveval` | Offline attention reconstruction eval for captured transformer K/V tensors |
+| `cmd/tqkvsweep` | Sweep key/value bit-widths, methods, and top-k settings over capture files |
+| `cmd/tqkvprofile` | Build layer profile plans from sweep reports |
+| `cmd/tqkvprofilebench` | Replay capture groups through emitted runtime profiles |
+| `cmd/tqkvsummarize` | Produce compact summaries from sweep reports |
 
 ## Usage
 
@@ -97,7 +139,7 @@ defer uploaded.Close()
 indices, scores, err = uploaded.ScoreTopK(10)
 ```
 
-If your quantized corpus is already stored in flat buffers, use
+If a quantized corpus is stored in flat buffers, use
 `GPUPreparedData` with `NewGPUPreparedScorerFromData` to avoid repacking.
 
 For a browser-backed smoke test that compares GPU scores against the CPU
@@ -125,8 +167,8 @@ Current shape:
 - CUDA backend is built with `-tags cuda`
 - uses the CUDA driver API plus NVRTC for runtime kernel compilation
 - top-k selection still happens on the CPU after score readback
-- intended as the bridge from library-grade search kernels toward full KV-cache
-  and local-model integration
+- the same build tag exposes `DenseMatmul`, `DenseMatmulTransB`, and
+  `GPUDenseContext` for dense float32 matmul paths
 
 Example validation:
 
@@ -136,11 +178,10 @@ go test -tags cuda ./... -count=1
 
 ### `tqserve`: OpenAI-compatible local server
 
-TurboQuant now ships an OpenAI-compatible HTTP server in
-[`cmd/tqserve`](/home/draco/work/turboquant/cmd/tqserve/main.go). It already
-works as a runtime front door: it can expose local backends behind a stable
-OpenAI-style surface while the native TurboQuant executor handles session
-memory, checkpointing, and KV-backed retrieval underneath.
+[`cmd/tqserve`](cmd/tqserve/main.go) is an optional
+OpenAI-compatible HTTP server for local testing. It can route requests to local
+backends and keep TurboQuant session memory, checkpoints, and KV-backed
+retrieval behind one API surface.
 
 Current server shape:
 
@@ -162,7 +203,7 @@ Current backend types:
 
 - `upstream`: any OpenAI-compatible backend reachable at `/v1`
 - `ollama`: native Ollama API translation through `/api/chat` and `/api/tags`
-- `native`: in-process TurboQuant session runtime with live KV-backed capacity reporting and semantic-memory-style turn retrieval
+- `native`: in-process TurboQuant session runtime with KV-backed capacity reporting and turn retrieval
 - `managed_upstream`: launch and supervise a local OpenAI-compatible process
 - `managed_ollama`: launch and supervise a local Ollama-compatible process
 
@@ -170,13 +211,13 @@ Current runtime surface:
 
 - in-memory session tracking keyed by `X-TQ-Session-ID`
 - pluggable session storage behind the `tqserve` library config
-- checkpoint capture and restore plumbing for future session migration
+- checkpoint capture and restore plumbing
 - native in-process runtime sessions backed by real TurboQuant KV pages
 - incremental turn syncing for clients that send either full history or just the latest turn
-- native responses grounded in retrieved prior session turns instead of a pure status stub
-- optional native executor delegation to an OpenAI-compatible or Ollama backend for real model generation on top of TurboQuant session memory
-- agent presence, entity claims, and session event feeds for deterministic multi-agent coordination
-- backend health/status snapshots for upstream, Ollama, managed processes, and future native executors
+- native responses grounded in retrieved prior session turns
+- optional native executor delegation to an OpenAI-compatible or Ollama backend
+- agent presence, entity claims, and session event feeds
+- backend health/status snapshots for upstream, Ollama, managed processes, and native executors
 - backend capacity snapshots for accelerator, VRAM, KV headroom, and session limits
 - optional managed-backend control URLs for live `/v1/tq/status` polling and checkpoint proxying
 - Prometheus-style counters for requests, auth failures, backend errors, and active sessions
@@ -203,12 +244,10 @@ go run ./cmd/tqserve \
   --models local-chat=qwen2.5:7b
 ```
 
-The `native` backend can also own the session/KV lifecycle while delegating the
-final grounded answer to a local model backend. That lets `tqserve` keep
-TurboQuant memory, checkpoints, and capacity accounting in one place while a
-real model handles text generation. In JSON config, prefer `executor_backend`
-to reuse another configured backend by name; `executor_base_url` remains the
-lower-level direct wiring option.
+The `native` backend can own the session/KV lifecycle while delegating final
+text generation to a local model backend. In JSON config, prefer
+`executor_backend` to reuse another configured backend by name;
+`executor_base_url` remains the lower-level direct wiring option.
 
 You can also run it from a JSON config file:
 
@@ -323,12 +362,9 @@ and a restore request looks like:
 }
 ```
 
-This is the serving layer we can keep stable while adding a native
-TurboQuant-backed executor for consumer GPUs.
-
 ### Session-Memory Eval Harness
 
-[`cmd/tqeval`](/home/draco/work/turboquant/cmd/tqeval/main.go) is an eval
+[`cmd/tqeval`](cmd/tqeval/main.go) is an eval
 harness for the current `tqserve` session-memory layer. It runs the same
 multi-turn prompt set against two OpenAI-compatible targets:
 
@@ -349,10 +385,10 @@ What it does not measure:
 - memory use at `32K` / `64K` / `128K` context
 - long-context quality retention under real model attention
 
-That benchmark still requires an end-to-end runtime integration path that feeds
-live model K/V tensors through TurboQuant during generation. This repo now has
-a native transformer-layer KV cache API for real per-head K/V tensors, but
-`tqserve` is not wired to that path yet.
+That benchmark requires an end-to-end runtime integration path that feeds live
+model K/V tensors through TurboQuant during generation. The repository includes
+a native transformer-layer KV cache API for per-head K/V tensors, but `tqserve`
+is not wired to that path yet.
 
 Use `cmd/tqeval` with a JSON config to drive the same prompts through both
 targets and capture the current session-memory behavior:
@@ -389,7 +425,7 @@ The example config compares a direct `llama.cpp`-compatible `/v1` endpoint with
 ### `llama.cpp` KV Benchmark Harness
 
 For real KV-cache benchmarking against `llama.cpp`, use
-[`cmd/tqkvbench`](/home/draco/work/turboquant/cmd/tqkvbench/main.go).
+[`cmd/tqkvbench`](cmd/tqkvbench/main.go).
 It drives external `llama-perplexity` and `llama-bench` binaries, then records:
 
 - perplexity by context size
@@ -397,10 +433,10 @@ It drives external `llama-perplexity` and `llama-bench` binaries, then records:
 - prompt and generation throughput from `llama-bench -o json`
 - baseline deltas within each run
 
-This is the honest benchmark path for:
+This benchmark path covers:
 
 - stock `llama.cpp` KV types such as `f16`, `q8_0`, `q4_0`, `iq4_nl`
-- TurboQuant-enabled forks that expose `turbo3`, `turbo4`, or similar KV types
+- builds that expose `turbo3`, `turbo4`, or similar KV types
 
 Example:
 
@@ -411,16 +447,16 @@ go run ./cmd/tqkvbench --config ./examples/tqkvbench.json --out ./tqkvbench-repo
 The example config includes:
 
 - one stock upstream `llama.cpp` run
-- one TurboQuant-fork run
+- one custom KV-type run
 - long-context perplexity checkpoints at `8K`, `32K`, and `128K`
 - throughput measurements at matching prefill depths
 
 ### Offline Transformer KV Capture Eval
 
 For native per-layer K/V ingestion without a live runtime hook yet, use
-[`cmd/tqkveval`](/home/draco/work/turboquant/cmd/tqkveval/main.go). It reads a
+[`cmd/tqkveval`](cmd/tqkveval/main.go). It reads a
 captured transformer-layer attention state, ingests the real query/K/V tensors
-into [`TransformerLayerKVCache`](/home/draco/work/turboquant/transformer_kv.go),
+into [`TransformerLayerKVCache`](transformer_kv.go),
 and reports exact-vs-approximate attention reconstruction metrics for either
 TurboQuant or a uniform scalar baseline.
 
@@ -454,7 +490,7 @@ Supported offline evaluation methods are:
   using the same bit budgets and per-vector norm storage
 
 To compare multiple TurboQuant settings on the same captured layer, use
-[`cmd/tqkvsweep`](/home/draco/work/turboquant/cmd/tqkvsweep/main.go):
+[`cmd/tqkvsweep`](cmd/tqkvsweep/main.go):
 
 ```bash
 go run ./cmd/tqkvsweep \
@@ -481,7 +517,7 @@ That produces one report per sample with:
   quality/compression tradeoffs by mean storage bytes and mean MSE
 
 For real-model captures, use the optional helper script
-[`scripts/export_hf_llama_kv_capture.py`](/home/draco/work/turboquant/scripts/export_hf_llama_kv_capture.py).
+[`scripts/export_hf_llama_kv_capture.py`](scripts/export_hf_llama_kv_capture.py).
 It targets Hugging Face Llama-style models and emits the JSON capture format
 consumed by both CLIs:
 
@@ -505,49 +541,12 @@ python3 ./scripts/export_hf_llama_kv_capture.py \
   --out ./captures.json
 ```
 
-That `captures.json` file can go straight into `tqkvsweep`, which will now
-report both per-sample results and aggregate per-configuration summaries across
-the whole capture set.
-
-For bounded Docker runs with `gotreesitter`-style artifacts and OOM metadata,
-use the helper scripts:
-
-```bash
-bash ./scripts/run_hf_kv_export_in_docker.sh \
-  --label llama32-1b \
-  --memory 16g \
-  -- --model meta-llama/Llama-3.2-1B \
-     --prompt "Summarize the deployment plan." \
-     --layer 0,8,16 \
-     --token-index last \
-     --dtype float16 \
-     --out /workspace/captures.json
-
-bash ./scripts/run_tqkvsweep_in_docker.sh \
-  --label llama32-1b-sweep \
-  --memory 12g \
-  -- --input ./captures.json \
-     --out ./tqkvsweep-report.json
-
-bash ./scripts/run_tqkvsweep_in_docker.sh \
-  --gpu \
-  --label qwen3-gpu-sweep \
-  --memory 12g \
-  -- --input ./captures.json \
-     --out ./tqkvsweep-report-gpu.json
-```
-
-Both scripts write `container.log`, `inspect.json`, and `metadata.txt` under
-`~/work/gotreesitter/harness_out/docker/<timestamp>-<label>/`, including
-whether Docker marked the run as `OOMKilled`.
-
-`run_tqkvsweep_in_docker.sh --gpu` builds the CUDA-tagged `tqkvsweep` binary in
-a CUDA development image, passes the CLI `--gpu` flag automatically, and falls
-back to CPU per configuration when the current GPU scorer does not support that
-key bit-width yet.
+That `captures.json` file can go straight into `tqkvsweep`, which reports both
+per-sample results and aggregate per-configuration summaries across the whole
+capture set.
 
 To turn a `tqkvsweep` report into a layer-by-layer allocation plan, use
-[`cmd/tqkvprofile`](/home/draco/work/turboquant/cmd/tqkvprofile/main.go):
+[`cmd/tqkvprofile`](cmd/tqkvprofile/main.go):
 
 ```bash
 go run ./cmd/tqkvprofile \
@@ -597,14 +596,14 @@ That emits:
 - one chosen `(key_bits, value_bits, top_k)` setting per layer
 - aggregate quality and storage for the selected plan
 - a runtime-ready `profiles` array of
-  [`TransformerLayerKVProfile`](/home/draco/work/turboquant/transformer_model_kv.go)
+  [`TransformerLayerKVProfile`](transformer_model_kv.go)
   entries you can feed into a heterogeneous multi-layer KV stack
 - native `kv_heads` for GQA models, so runtime profiles preserve the real KV
   cache shape instead of expanding to query-head count
 
 To turn one of those emitted profile files back into a runtime-shaped bench over
 real captured K/V tensors, use
-[`cmd/tqkvprofilebench`](/home/draco/work/turboquant/cmd/tqkvprofilebench/main.go):
+[`cmd/tqkvprofilebench`](cmd/tqkvprofilebench/main.go):
 
 ```bash
 go run ./cmd/tqkvprofilebench \
@@ -626,7 +625,7 @@ reports:
 
 To turn a `tqkvsweep` report into a smaller comparison digest with overall,
 per-method, per-layer, per-token, and relative-position frontiers, use
-[`cmd/tqkvsummarize`](/home/draco/work/turboquant/cmd/tqkvsummarize/main.go):
+[`cmd/tqkvsummarize`](cmd/tqkvsummarize/main.go):
 
 ```bash
 go run ./cmd/tqkvsummarize \
@@ -636,7 +635,7 @@ go run ./cmd/tqkvsummarize \
 
 ### Quantized KV cache pages
 
-TurboQuant now includes an append-only quantized KV page API for local-model
+TurboQuant includes an append-only quantized KV page API for local-model
 workloads. Keys use the IP quantizer for fast query scoring, values use the MSE
 quantizer for approximate attention output reconstruction, and the page can
 optionally upload its GPU state for repeated attention-style lookups.
@@ -660,9 +659,9 @@ if err := page.EnableGPUKeys(); err == nil {
 ```
 
 For real transformer layers, use
-[`TransformerLayerKVCache`](/home/draco/work/turboquant/transformer_kv.go) for
+[`TransformerLayerKVCache`](transformer_kv.go) for
 one layer or
-[`TransformerModelKVCache`](/home/draco/work/turboquant/transformer_model_kv.go)
+[`TransformerModelKVCache`](transformer_model_kv.go)
 to assign different bit widths per layer:
 
 ```go
@@ -709,7 +708,7 @@ if err == nil {
 }
 ```
 
-On native CUDA builds, `EnableGPUKeys` now uploads both sides of the page:
+On native CUDA builds, `EnableGPUKeys` uploads both sides of the page:
 
 - keys stay resident for prepared-query top-k scoring
 - values stay resident in packed form for device-side rotated-domain weighted
@@ -728,7 +727,7 @@ q2 := turboquant.NewWithSeed(384, 2, 42)
 
 ### Default fast rotation
 
-`New` and `NewIP` now use a structured orthogonal Walsh-Hadamard rotation by
+`New` and `NewIP` use a structured orthogonal Walsh-Hadamard rotation by
 default. This keeps deterministic seeded behavior while cutting rotation cost
 substantially on larger dimensions.
 
@@ -808,38 +807,30 @@ ipData, err := turboquant.MarshalPortableIPQuantizer(ipq)
 ipq2, err := turboquant.UnmarshalPortableIPQuantizer(ipData)
 ```
 
-## Used by GoSX
+### Portable quantizer specs and index buffers
 
-TurboQuant was extracted from [GoSX](https://github.com/odvcencio/gosx), a Go-native web platform that compiles to WASM without CGo. GoSX uses TurboQuant in two subsystems:
-
-### CRDT vector values
-
-GoSX's CRDT package stores embedding vectors inside collaborative documents that sync between replicas in real-time. The MSE quantizer compresses these vectors before transmission and storage. A fixed seed ensures every replica produces byte-identical packed output — critical for CRDT convergence, where all peers must agree on the compressed representation without coordination.
+`Spec` exposes the rotation and codebook data needed to reproduce a quantizer
+outside Go. The index APIs expose one scalar codebook index per coordinate when
+callers need their own packed format.
 
 ```go
-// Inside GoSX's crdt package:
-// Every replica uses the same seed, so quantization is deterministic
-q := turboquant.NewHadamardWithSeed(dim, bitWidth, vectorQuantSeed)
-packed := make([]byte, turboquant.PackedSize(dim, bitWidth))
-norm := q.QuantizeTo(packed, embedding)
-// packed bytes are identical on every replica for the same input
+spec := q.Spec()
+_ = spec.Centroids
+_ = spec.RotationKind
+
+indices := make([]int, q.Dim())
+norm := q.QuantizeIndicesTo(indices, vec)
+
+packed := make([]byte, turboquant.PackedSize(q.Dim(), q.BitWidth()))
+turboquant.PackIndices(packed, indices, q.BitWidth())
+
+decoded := make([]int, q.Dim())
+turboquant.UnpackIndices(decoded, packed, q.Dim(), q.BitWidth())
+
+recovered := make([]float32, q.Dim())
+q.DequantizeIndicesTo(recovered, decoded)
+_ = norm
 ```
-
-### In-memory vector search
-
-GoSX's `vecdb` package is a concurrent in-memory vector index backed by the IP quantizer. Vectors are quantized on insertion, and similarity search uses `PrepareQuery` to amortize the O(d^2) projection across all stored vectors. This index powers three semantic primitives built into the framework:
-
-- **SemanticCache** — cache responses by meaning instead of exact key match. A query that's semantically similar to a cached query returns the cached result.
-- **SemanticRouter** — route incoming requests to handlers by intent similarity instead of URL pattern matching.
-- **ContentIndex** — search pages and documents by semantic similarity for site-wide search.
-
-All three run entirely in-process with no external vector database. The quantized index fits in memory because TurboQuant compresses 384-dim float32 vectors (1,536 bytes) to 144 bytes at 3-bit — a 10x reduction that makes 100K-vector indexes practical at ~14MB.
-
-### 3D scene compression (Kiln)
-
-TurboQuant is the compression layer for [Kiln](https://github.com/odvcencio/kiln), a collaborative 3D creation platform built on GoSX. Mesh vertex data (positions, normals, UVs) is quantized for real-time streaming between collaborators over WebSocket. Vertex positions use 8-bit quantization, normals use 4-bit, and UVs use 8-bit — reducing mesh bandwidth by 4-8x while preserving visual fidelity. Because the entire GoSX stack compiles to WASM, TurboQuant runs on both server (canonical evaluation) and client (preview rendering) without native dependencies.
-
----
 
 ## Bit-width guide
 
