@@ -48,7 +48,7 @@ Requires Go 1.25.1 or newer.
 | `cmd/tqkvbench` | Driver for external KV-cache perplexity and throughput benchmarks |
 | `cmd/tqkveval` | Offline attention reconstruction eval for captured transformer K/V tensors |
 | `cmd/tqkvsweep` | Sweep key/value bit-widths, methods, and top-k settings over capture files |
-| `cmd/tqkvprofile` | Build layer profile plans from sweep reports |
+| `cmd/tqkvprofile` | Build layer profiles from sweep reports |
 | `cmd/tqkvprofilebench` | Replay capture groups through emitted runtime profiles |
 | `cmd/tqkvsummarize` | Produce compact summaries from sweep reports |
 
@@ -378,17 +378,8 @@ What it measures today:
 - response size/content previews
 - optional `tqserve` status and session snapshots
 
-What it does not measure:
-
-- real transformer KV-cache quality against `llama.cpp` KV quantization
-- perplexity
-- memory use at `32K` / `64K` / `128K` context
-- long-context quality retention under real model attention
-
-That benchmark requires an end-to-end runtime integration path that feeds live
-model K/V tensors through TurboQuant during generation. The repository includes
-a native transformer-layer KV cache API for per-head K/V tensors, but `tqserve`
-is not wired to that path yet.
+For real transformer KV-cache quality, perplexity, long-context memory, and
+attention reconstruction measurements, use the KV-specific tools below.
 
 Use `cmd/tqeval` with a JSON config to drive the same prompts through both
 targets and capture the current session-memory behavior:
@@ -524,7 +515,7 @@ consumed by both CLIs:
 ```bash
 python3 ./scripts/export_hf_llama_kv_capture.py \
   --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
-  --prompt "Summarize the deployment plan." \
+  --prompt "Summarize the deployment incident." \
   --layer 0 \
   --out ./layer0.json
 ```
@@ -545,7 +536,7 @@ That `captures.json` file can go straight into `tqkvsweep`, which reports both
 per-sample results and aggregate per-configuration summaries across the whole
 capture set.
 
-To turn a `tqkvsweep` report into a layer-by-layer allocation plan, use
+To turn a `tqkvsweep` report into a layer-by-layer allocation profile, use
 [`cmd/tqkvprofile`](cmd/tqkvprofile/main.go):
 
 ```bash
@@ -594,7 +585,7 @@ go run ./cmd/tqkvprofile \
 That emits:
 
 - one chosen `(key_bits, value_bits, top_k)` setting per layer
-- aggregate quality and storage for the selected plan
+- aggregate quality and storage for the selected profile
 - a runtime-ready `profiles` array of
   [`TransformerLayerKVProfile`](transformer_model_kv.go)
   entries you can feed into a heterogeneous multi-layer KV stack
