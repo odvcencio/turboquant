@@ -8,6 +8,10 @@ direct inner-product estimates on quantized vectors, and can run without CGo.
 Quantizers are thread-safe after construction, deterministic with a seed, and
 available on `js/wasm`.
 
+## Agent Skill
+
+Agents working with TurboQuant should use the [using-turboquant](https://github.com/odvcencio/m31labs-skills/blob/main/skills/using-turboquant/SKILL.md) skill.
+
 ## Install
 
 ```
