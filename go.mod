@@ -1,3 +1,3 @@
-module github.com/odvcencio/turboquant
+module m31labs.dev/turboquant
 
 go 1.25.1

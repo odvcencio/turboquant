@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	turboquant "github.com/odvcencio/turboquant"
-	"github.com/odvcencio/turboquant/internal/tqserve"
+	turboquant "m31labs.dev/turboquant"
+	"m31labs.dev/turboquant/internal/tqserve"
 )
 
 type fileConfig struct {

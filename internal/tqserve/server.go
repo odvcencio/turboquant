@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	turboquant "github.com/odvcencio/turboquant"
+	turboquant "m31labs.dev/turboquant"
 )
 
 var ErrUnknownModel = errors.New("tqserve: unknown model")

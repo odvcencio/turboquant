@@ -9,7 +9,7 @@ import (
 	"sort"
 	"syscall/js"
 
-	"github.com/odvcencio/turboquant"
+	"m31labs.dev/turboquant"
 )
 
 type smokeResult struct {

@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	turboquant "github.com/odvcencio/turboquant"
+	turboquant "m31labs.dev/turboquant"
 )
 
 type report struct {

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/odvcencio/turboquant/internal/tqserve"
+	"m31labs.dev/turboquant/internal/tqserve"
 )
 
 type config struct {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	turboquant "github.com/odvcencio/turboquant"
+	turboquant "m31labs.dev/turboquant"
 )
 
 type BackendStatus struct {

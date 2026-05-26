@@ -7,7 +7,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/odvcencio/turboquant/internal/cudaruntime"
+	"m31labs.dev/turboquant/internal/cudaruntime"
 )
 
 type kvGPUValueBackendCUDA struct {

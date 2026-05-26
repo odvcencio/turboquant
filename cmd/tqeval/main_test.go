@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/turboquant/internal/tqserve"
+	"m31labs.dev/turboquant/internal/tqserve"
 )
 
 func TestDecodePromptsBlankSeparated(t *testing.T) {

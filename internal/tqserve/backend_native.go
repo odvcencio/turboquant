@@ -14,7 +14,7 @@ import (
 	"time"
 	"unicode"
 
-	turboquant "github.com/odvcencio/turboquant"
+	turboquant "m31labs.dev/turboquant"
 )
 
 type NativeBackendConfig struct {

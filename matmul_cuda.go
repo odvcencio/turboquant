@@ -5,7 +5,7 @@ package turboquant
 import (
 	"fmt"
 
-	"github.com/odvcencio/turboquant/internal/cudaruntime"
+	"m31labs.dev/turboquant/internal/cudaruntime"
 )
 
 // DenseMatmul computes C = A * B on GPU using cuBLAS.

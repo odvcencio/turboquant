@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/odvcencio/turboquant/internal/cudaruntime"
+	"m31labs.dev/turboquant/internal/cudaruntime"
 )
 
 // DenseLayerSpec describes one weight matrix to upload to GPU.

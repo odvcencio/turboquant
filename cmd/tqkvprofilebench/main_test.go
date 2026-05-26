@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	turboquant "github.com/odvcencio/turboquant"
+	turboquant "m31labs.dev/turboquant"
 )
 
 func TestRunCLIGroupedKVHeadsFallbackFromCapture(t *testing.T) {
