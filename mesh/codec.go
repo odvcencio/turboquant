@@ -83,6 +83,11 @@ func Encode(pos, nrm []float32, joints []uint32, weights []float32, opt Options)
 
 // Decode reverses Encode, reconstructing the float/uint streams per the Spec.
 // Absent streams come back nil (e.g. normals are nil when Spec.NormalBits == 0).
+//
+// Each present packed buffer must hold at least Spec.VertexCount vertices; a
+// buffer shorter than its stream's per-vertex size panics with a message naming
+// the offending stream. (Encode always produces buffers that satisfy this, so a
+// Quantized straight from Encode is safe to Decode.)
 func Decode(q Quantized) (pos, nrm []float32, joints []uint32, weights []float32) {
 	n := q.Spec.VertexCount
 

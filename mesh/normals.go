@@ -1,6 +1,9 @@
 package mesh
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 // Octahedral normal codec. A unit normal is projected onto the octahedron and
 // stored as two signed-normalized components. Decode is the octahedral
@@ -74,9 +77,15 @@ func snormDecode(u uint32, bits int) float32 {
 	return float32(s) / maxS
 }
 
-// EncodeNormals octahedral-encodes an interleaved unit-normal stream (length
-// 3N) into two bits-wide snorm codes per normal, packed little-endian.
+// EncodeNormals octahedral-encodes an interleaved unit-normal stream into two
+// bits-wide snorm codes per normal, packed little-endian.
+//
+// bits must be 8 or 16; any other value panics.
+//
+// The input length must be exactly 3*N; a trailing partial normal (length not a
+// multiple of 3) is silently dropped.
 func EncodeNormals(nrm []float32, bits int) []byte {
+	validateBits(bits)
 	n := len(nrm) / 3
 	out := make([]byte, 0, n*2*((bits+7)/8))
 	for v := 0; v < n; v++ {
@@ -89,7 +98,17 @@ func EncodeNormals(nrm []float32, bits int) []byte {
 
 // DecodeNormals reverses EncodeNormals, producing an interleaved []float32 of
 // unit normals (length 3n).
+//
+// bits must be 8 or 16; any other value panics. The packed buffer must hold at
+// least n normals (2 codes each); a shorter buffer panics with a message naming
+// the invariant.
 func DecodeNormals(packed []byte, bits, n int) []float32 {
+	validateBits(bits)
+	need := n * 2 * ((bits + 7) / 8)
+	if len(packed) < need {
+		panic(fmt.Sprintf("mesh: normals buffer too short: have %d bytes, need %d for %d vertices",
+			len(packed), need, n))
+	}
 	out := make([]float32, n*3)
 	off := 0
 	for v := 0; v < n; v++ {
