@@ -35,6 +35,19 @@ type PreparedQuery struct {
 	rotY    []float32 // y rotated into the MSE domain once
 
 	mseBitWidth uint8
+
+	// bound is the memoized state for ScoreUpperBound. boundComputed guards the
+	// one-time O(LUT-bytes) pass that derives boundA (= Σ_b max_v signLUT) and
+	// boundB (= Σ_b max_v mseLUT); both are query constants. Stored behind a
+	// pointer so the zero PreparedQuery value and value copies share one cache.
+	bound *scoreBoundCache
+}
+
+type scoreBoundCache struct {
+	once     sync.Once
+	a        float32 // Σ_b max_v signLUT[b*256+v] = ||S·y||_1
+	b        float32 // Σ_b max_v mseLUT[b*256+v]  (only meaningful when prunable)
+	prunable bool    // true iff an MSE LUT exists for this bit width
 }
 
 type ipScratch struct {
@@ -230,6 +243,7 @@ func AllocPreparedQuery(dim int) PreparedQuery {
 	return PreparedQuery{
 		signLUT: make([]float32, preparedQuerySignLUTLen(dim)),
 		rotY:    make([]float32, dim),
+		bound:   &scoreBoundCache{},
 	}
 }
 
@@ -469,6 +483,75 @@ func (q *IPQuantizer) InnerProductPreparedBatchToTrusted(dst []float32, qx IPQua
 	default:
 		q.innerProductPreparedBatchN(dst, qx, pqs, allFastMSE)
 	}
+}
+
+// ScoreUpperBound returns a provably-correct upper bound on the inner-product
+// score for any corpus vector with the given residual norm:
+//
+//	bound = B + (sqrt(pi/2)/d) * resNorm * A
+//
+// where B = Σ_b max_v mseLUT[b*256+v]  (MSE-stage upper component)
+// and   A = Σ_b max_v signLUT[b*256+v] = ||S·y||_1  (the all-aligned sign pattern).
+//
+// For every corpus vector c, InnerProductPrepared(c, pq) <= ScoreUpperBound(c.ResNorm):
+// the MSE term Σ_b mseLUT[b*256+MSE_b] <= B byte-wise, and the sign term
+// scale·Σ_b signLUT[b*256+Signs_b] <= scale·A since each sign byte's table entry is
+// at most that byte's all-aligned maximum and scale = sqrt(pi/2)/d·resNorm >= 0.
+//
+// prunable is false when there is no MSE LUT for this bit width (MSE stage 3/5/6/7),
+// in which case bound is meaningless and callers MUST NOT prune: scale·A alone would
+// ignore the MSE-stage contribution and over-prune.
+//
+// A and B are query constants; they are computed once (O(num LUT bytes)) on the first
+// call and memoized on the PreparedQuery, so per-candidate cost is a multiply-add.
+func (pq PreparedQuery) ScoreUpperBound(resNorm float32) (bound float32, prunable bool) {
+	a, b, ok := pq.boundConstants()
+	if !ok {
+		return 0, false
+	}
+	d := float32(len(pq.rotY))
+	scale := float32(math.Sqrt(math.Pi/2.0)) / d * resNorm
+	return b + scale*a, true
+}
+
+// boundConstants returns the memoized A/B query constants and whether the prepared
+// query supports pruning (has an MSE LUT). When the prepared query carries no cache
+// pointer (e.g. a caller-allocated legacy buffer), the constants are recomputed each
+// call without memoization, which is still correct.
+func (pq PreparedQuery) boundConstants() (a, b float32, prunable bool) {
+	if pq.bound == nil {
+		a, b, prunable = pq.computeBoundConstants()
+		return a, b, prunable
+	}
+	pq.bound.once.Do(func() {
+		pq.bound.a, pq.bound.b, pq.bound.prunable = pq.computeBoundConstants()
+	})
+	return pq.bound.a, pq.bound.b, pq.bound.prunable
+}
+
+func (pq PreparedQuery) computeBoundConstants() (a, b float32, prunable bool) {
+	a = sumPerByteMax(pq.signLUT)
+	if len(pq.mseLUT) == 0 {
+		return a, 0, false
+	}
+	return a, sumPerByteMax(pq.mseLUT), true
+}
+
+// sumPerByteMax returns Σ_b max_{v∈0..255} lut[b*256+v] over each 256-entry byte
+// table. The all-aligned (sign) / max-MSE pattern's value is exactly that per-byte max.
+func sumPerByteMax(lut []float32) float32 {
+	var total float32
+	for base := 0; base+256 <= len(lut); base += 256 {
+		table := lut[base : base+256]
+		max := table[0]
+		for _, v := range table[1:] {
+			if v > max {
+				max = v
+			}
+		}
+		total += max
+	}
+	return total
 }
 
 func (q *IPQuantizer) innerProductPreparedTrusted(qx IPQuantized, pq PreparedQuery) float32 {
