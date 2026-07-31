@@ -846,7 +846,7 @@ MSE distortion decreases exponentially with bit-width. At 2 bits per dimension, 
 
 TurboQuant achieves near-optimal distortion through three steps:
 
-1. **Orthogonal rotation** — By default TurboQuant uses a structured Walsh-Hadamard rotation with random signs and permutation for fast `O(d log d)` application. The legacy dense QR rotation remains available via `NewDense*`. Both aim to Gaussianize coordinates so scalar quantization is effective.
+1. **Orthogonal rotation** — By default TurboQuant runs `DefaultHadamardRounds` (3) structured Walsh-Hadamard rounds, each with an independent random permutation and independent sign vectors, for fast `O(d log d)` application per round. A single round leaves an input flat only within its power-of-two block: a one-hot vector rotated with one round stays exactly zero outside that block. A fresh permutation between rounds mixes that energy across every block, matching the paper's Theorem 1 worst-case distortion bound. Callers who need a different round count use `NewHadamardRounds`/`NewHadamardRoundsWithSeed`; a round count of 1 reproduces the original single-round transform. The legacy dense QR rotation remains available via `NewDense*` as the reference implementation. All variants aim to Gaussianize coordinates so scalar quantization is effective.
 
 2. **Lloyd-Max codebook** — Compute MSE-optimal scalar quantization centroids for the Beta distribution via the Lloyd-Max algorithm. Centroids and boundaries are cached per (dim, bitWidth) pair.
 

@@ -5,6 +5,29 @@ import (
 	"testing"
 )
 
+func TestValidateRounds(t *testing.T) {
+	cases := []struct {
+		rounds  int
+		wantErr bool
+	}{
+		{0, true},
+		{-1, true},
+		{1, false},
+		{3, false},
+		{8, false},
+		{9, true},
+	}
+	for _, c := range cases {
+		err := validateRounds(c.rounds)
+		if c.wantErr && err == nil {
+			t.Errorf("rounds=%d: expected error", c.rounds)
+		}
+		if !c.wantErr && err != nil {
+			t.Errorf("rounds=%d: unexpected error: %v", c.rounds, err)
+		}
+	}
+}
+
 func TestValidateVectorRejectsDimensionMismatch(t *testing.T) {
 	err := ValidateVector(4, []float32{1, 2, 3})
 	if err == nil {

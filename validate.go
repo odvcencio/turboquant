@@ -36,6 +36,13 @@ func validateIPBitWidth(bitWidth int) error {
 	return nil
 }
 
+func validateRounds(rounds int) error {
+	if rounds < 1 || rounds > 8 {
+		return fmt.Errorf("turboquant: rounds must be 1-8")
+	}
+	return nil
+}
+
 // ValidateVector checks that vec has the expected dimension and contains
 // no NaN or Inf values. Returns nil if valid.
 func ValidateVector(dim int, vec []float32) error {

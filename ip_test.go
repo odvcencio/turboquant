@@ -95,11 +95,30 @@ func TestIPQuantizerPreparedQuery(t *testing.T) {
 	}
 }
 
+func TestNewIPHadamardRoundsWithSeed(t *testing.T) {
+	for _, rounds := range []int{1, 2, 3, 4} {
+		q := NewIPHadamardRoundsWithSeed(64, 3, rounds, 42)
+		if q.mse.Rounds() != rounds {
+			t.Errorf("rounds=%d: mse.Rounds() = %d", rounds, q.mse.Rounds())
+		}
+		rng := rand.New(rand.NewSource(11))
+		x := randomUnitVector(64, rng)
+		y := randomUnitVector(64, rng)
+		qx := q.Quantize(x)
+		direct := q.InnerProduct(qx, y)
+		pq := q.PrepareQuery(y)
+		prepared := q.InnerProductPrepared(qx, pq)
+		if math.Abs(float64(direct-prepared)) > 1e-5 {
+			t.Errorf("rounds=%d: prepared %.6f != direct %.6f", rounds, prepared, direct)
+		}
+	}
+}
+
 func TestIPHadamardPreparedQuery(t *testing.T) {
 	dim := 128
 	q := NewIPHadamardWithSeed(dim, 3, 42)
-	if q.RotationKind() != "hadamard" {
-		t.Fatalf("RotationKind() = %q want hadamard", q.RotationKind())
+	if q.RotationKind() != "hadamard-multi" {
+		t.Fatalf("RotationKind() = %q want hadamard-multi", q.RotationKind())
 	}
 	rng := rand.New(rand.NewSource(77))
 	x := randomUnitVector(dim, rng)

@@ -9,7 +9,8 @@ import (
 
 const (
 	serializeHeaderSizeV1 = 24
-	serializeHeaderSize   = 25
+	serializeHeaderSizeV2 = 25
+	serializeHeaderSizeV3 = 26
 )
 
 const (
@@ -22,7 +23,9 @@ const (
 
 // MarshalQuantizer serializes a Quantizer to bytes.
 // The quantizer is fully reconstructible from dim, bitWidth, seed, and
-// rotation family.
+// rotation family. A dense or legacy single-round Hadamard rotation writes a
+// 25-byte header. A multi-round Hadamard rotation writes a 26-byte header
+// that carries the round count.
 func MarshalQuantizer(q *Quantizer) ([]byte, error) {
 	if q == nil {
 		return nil, fmt.Errorf("turboquant: nil quantizer")
@@ -33,42 +36,95 @@ func MarshalQuantizer(q *Quantizer) ([]byte, error) {
 	if err := validateBitWidth(q.bitWidth); err != nil {
 		return nil, err
 	}
-	buf := make([]byte, serializeHeaderSize)
-	binary.LittleEndian.PutUint64(buf[0:8], uint64(q.dim))
-	binary.LittleEndian.PutUint64(buf[8:16], uint64(q.bitWidth))
-	binary.LittleEndian.PutUint64(buf[16:24], uint64(q.seed))
-	buf[24] = byte(q.rotation.kind)
-	return buf, nil
+	return marshalRotationHeader(q.dim, q.bitWidth, q.seed, q.rotation), nil
 }
 
 // UnmarshalQuantizer reconstructs a Quantizer from serialized bytes.
 func UnmarshalQuantizer(data []byte) (*Quantizer, error) {
-	if len(data) < serializeHeaderSizeV1 {
-		return nil, fmt.Errorf("turboquant: serialized data too short (%d bytes)", len(data))
-	}
-	dim := int(binary.LittleEndian.Uint64(data[0:8]))
-	bitWidth := int(binary.LittleEndian.Uint64(data[8:16]))
-	seed := int64(binary.LittleEndian.Uint64(data[16:24]))
-	if err := validateDim(dim); err != nil {
+	dim, bitWidth, seed, err := unmarshalHeaderFields(data)
+	if err != nil {
 		return nil, err
 	}
 	if err := validateBitWidth(bitWidth); err != nil {
 		return nil, err
 	}
-	if len(data) < serializeHeaderSize {
+	if len(data) < serializeHeaderSizeV2 {
 		return NewDenseWithSeed(dim, bitWidth, seed), nil
+	}
+	rounds, err := decodeRotationHeader(data)
+	if err != nil {
+		return nil, err
 	}
 	switch rotationKind(data[24]) {
 	case rotationKindDense:
 		return NewDenseWithSeed(dim, bitWidth, seed), nil
-	case rotationKindHadamard:
-		return NewHadamardWithSeed(dim, bitWidth, seed), nil
+	case rotationKindHadamard, rotationKindHadamardMulti:
+		return NewHadamardRoundsWithSeed(dim, bitWidth, rounds, seed), nil
 	default:
 		return nil, fmt.Errorf("turboquant: unsupported rotation kind %d", data[24])
 	}
 }
 
-// MarshalIPQuantizer serializes an IPQuantizer to bytes.
+// marshalRotationHeader writes the shared dim/bitWidth/seed/kind header used
+// by both MarshalQuantizer and MarshalIPQuantizer. It emits a 26-byte header
+// for a multi-round Hadamard rotation, and a 25-byte header otherwise.
+func marshalRotationHeader(dim, bitWidth int, seed int64, rotation rotationState) []byte {
+	size := serializeHeaderSizeV2
+	if rotation.kind == rotationKindHadamardMulti {
+		size = serializeHeaderSizeV3
+	}
+	buf := make([]byte, size)
+	binary.LittleEndian.PutUint64(buf[0:8], uint64(dim))
+	binary.LittleEndian.PutUint64(buf[8:16], uint64(bitWidth))
+	binary.LittleEndian.PutUint64(buf[16:24], uint64(seed))
+	buf[24] = byte(rotation.kind)
+	if size == serializeHeaderSizeV3 {
+		buf[25] = byte(len(rotation.rounds))
+	}
+	return buf
+}
+
+// unmarshalHeaderFields reads and validates the shared dim/bitWidth/seed
+// header fields common to MarshalQuantizer and MarshalIPQuantizer.
+func unmarshalHeaderFields(data []byte) (dim, bitWidth int, seed int64, err error) {
+	if len(data) < serializeHeaderSizeV1 {
+		return 0, 0, 0, fmt.Errorf("turboquant: serialized data too short (%d bytes)", len(data))
+	}
+	dim = int(binary.LittleEndian.Uint64(data[0:8]))
+	bitWidth = int(binary.LittleEndian.Uint64(data[8:16]))
+	seed = int64(binary.LittleEndian.Uint64(data[16:24]))
+	if err := validateDim(dim); err != nil {
+		return 0, 0, 0, err
+	}
+	return dim, bitWidth, seed, nil
+}
+
+// decodeRotationHeader reads the round count for a rotationKindHadamard or
+// rotationKindHadamardMulti header. data must be at least
+// serializeHeaderSizeV2 bytes; the caller has already checked that.
+func decodeRotationHeader(data []byte) (rounds int, err error) {
+	switch rotationKind(data[24]) {
+	case rotationKindDense:
+		return 0, nil
+	case rotationKindHadamard:
+		return 1, nil
+	case rotationKindHadamardMulti:
+		if len(data) < serializeHeaderSizeV3 {
+			return 0, fmt.Errorf("turboquant: serialized data too short for multi-round header (%d bytes)", len(data))
+		}
+		rounds = int(data[25])
+		if err := validateRounds(rounds); err != nil {
+			return 0, err
+		}
+		return rounds, nil
+	default:
+		return 0, fmt.Errorf("turboquant: unsupported rotation kind %d", data[24])
+	}
+}
+
+// MarshalIPQuantizer serializes an IPQuantizer to bytes. A dense or legacy
+// single-round Hadamard rotation writes a 25-byte header. A multi-round
+// Hadamard rotation writes a 26-byte header that carries the round count.
 func MarshalIPQuantizer(q *IPQuantizer) ([]byte, error) {
 	if q == nil {
 		return nil, fmt.Errorf("turboquant: nil IP quantizer")
@@ -79,36 +135,30 @@ func MarshalIPQuantizer(q *IPQuantizer) ([]byte, error) {
 	if err := validateIPBitWidth(q.bitWidth); err != nil {
 		return nil, err
 	}
-	buf := make([]byte, serializeHeaderSize)
-	binary.LittleEndian.PutUint64(buf[0:8], uint64(q.dim))
-	binary.LittleEndian.PutUint64(buf[8:16], uint64(q.bitWidth))
-	binary.LittleEndian.PutUint64(buf[16:24], uint64(q.seed))
-	buf[24] = byte(q.mse.rotation.kind)
-	return buf, nil
+	return marshalRotationHeader(q.dim, q.bitWidth, q.seed, q.mse.rotation), nil
 }
 
 // UnmarshalIPQuantizer reconstructs an IPQuantizer from serialized bytes.
 func UnmarshalIPQuantizer(data []byte) (*IPQuantizer, error) {
-	if len(data) < serializeHeaderSizeV1 {
-		return nil, fmt.Errorf("turboquant: serialized data too short (%d bytes)", len(data))
-	}
-	dim := int(binary.LittleEndian.Uint64(data[0:8]))
-	bitWidth := int(binary.LittleEndian.Uint64(data[8:16]))
-	seed := int64(binary.LittleEndian.Uint64(data[16:24]))
-	if err := validateDim(dim); err != nil {
+	dim, bitWidth, seed, err := unmarshalHeaderFields(data)
+	if err != nil {
 		return nil, err
 	}
 	if err := validateIPBitWidth(bitWidth); err != nil {
 		return nil, err
 	}
-	if len(data) < serializeHeaderSize {
+	if len(data) < serializeHeaderSizeV2 {
 		return NewIPDenseWithSeed(dim, bitWidth, seed), nil
+	}
+	rounds, err := decodeRotationHeader(data)
+	if err != nil {
+		return nil, err
 	}
 	switch rotationKind(data[24]) {
 	case rotationKindDense:
 		return NewIPDenseWithSeed(dim, bitWidth, seed), nil
-	case rotationKindHadamard:
-		return NewIPHadamardWithSeed(dim, bitWidth, seed), nil
+	case rotationKindHadamard, rotationKindHadamardMulti:
+		return NewIPHadamardRoundsWithSeed(dim, bitWidth, rounds, seed), nil
 	default:
 		return nil, fmt.Errorf("turboquant: unsupported rotation kind %d", data[24])
 	}
@@ -232,7 +282,7 @@ func validatePortableMSEState(state portableState) error {
 		return err
 	}
 	switch state.rotationKind {
-	case rotationKindDense, rotationKindHadamard:
+	case rotationKindDense, rotationKindHadamard, rotationKindHadamardMulti:
 	default:
 		return fmt.Errorf("turboquant: unsupported portable rotation kind %d", state.rotationKind)
 	}

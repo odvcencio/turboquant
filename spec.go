@@ -9,6 +9,13 @@ type RotationBlock struct {
 	Size   int
 }
 
+// RotationRound describes one randomized Walsh-Hadamard round.
+type RotationRound struct {
+	Perm   []int
+	Signs1 []float32
+	Signs2 []float32
+}
+
 // QuantizerSpec is a portable snapshot of the data needed to reproduce a
 // Quantizer's transform and codebook outside the package.
 type QuantizerSpec struct {
@@ -17,12 +24,19 @@ type QuantizerSpec struct {
 	Seed         int64
 	RotationKind string
 	Dense        []float32
-	Perm         []int
-	Signs1       []float32
-	Signs2       []float32
-	Blocks       []RotationBlock
-	Centroids    []float32
-	Boundaries   []float32
+
+	// Rounds holds every Hadamard round in application order.
+	Rounds []RotationRound
+
+	// Perm, Signs1, and Signs2 stay populated when len(Rounds) == 1.
+	// Deprecated: read Rounds instead.
+	Perm   []int
+	Signs1 []float32
+	Signs2 []float32
+
+	Blocks     []RotationBlock
+	Centroids  []float32
+	Boundaries []float32
 }
 
 // Spec returns a copy of the quantizer's portable rotation and codebook data.
@@ -38,10 +52,20 @@ func (q *Quantizer) Spec() QuantizerSpec {
 	switch q.rotation.kind {
 	case rotationKindDense:
 		spec.Dense = cloneFloat32s(q.rotation.dense)
-	case rotationKindHadamard:
-		spec.Perm = append([]int(nil), q.rotation.perm...)
-		spec.Signs1 = cloneFloat32s(q.rotation.signs1)
-		spec.Signs2 = cloneFloat32s(q.rotation.signs2)
+	case rotationKindHadamard, rotationKindHadamardMulti:
+		spec.Rounds = make([]RotationRound, len(q.rotation.rounds))
+		for i, rd := range q.rotation.rounds {
+			spec.Rounds[i] = RotationRound{
+				Perm:   append([]int(nil), rd.perm...),
+				Signs1: cloneFloat32s(rd.signs1),
+				Signs2: cloneFloat32s(rd.signs2),
+			}
+		}
+		if len(spec.Rounds) == 1 {
+			spec.Perm = append([]int(nil), spec.Rounds[0].Perm...)
+			spec.Signs1 = cloneFloat32s(spec.Rounds[0].Signs1)
+			spec.Signs2 = cloneFloat32s(spec.Rounds[0].Signs2)
+		}
 		spec.Blocks = make([]RotationBlock, len(q.rotation.blocks))
 		for i, block := range q.rotation.blocks {
 			spec.Blocks[i] = RotationBlock{Offset: block.offset, Size: block.size}

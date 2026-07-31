@@ -121,6 +121,20 @@ func NewIPHadamardWithSeed(dim, bitWidth int, seed int64) *IPQuantizer {
 	return newIPQuantizer(dim, bitWidth, seed, NewHadamardWithSeed(dim, bitWidth-1, mseSeed))
 }
 
+// NewIPHadamardRoundsWithSeed creates a deterministic inner-product-optimal
+// quantizer with an explicit structured Walsh-Hadamard round count in the MSE
+// stage. rounds must be 1-8.
+func NewIPHadamardRoundsWithSeed(dim, bitWidth, rounds int, seed int64) *IPQuantizer {
+	if dim < 2 {
+		panic("turboquant: dim must be >= 2")
+	}
+	if bitWidth < 2 {
+		panic("turboquant: IP quantizer bitWidth must be >= 2")
+	}
+	mseSeed := seed
+	return newIPQuantizer(dim, bitWidth, seed, NewHadamardRoundsWithSeed(dim, bitWidth-1, rounds, mseSeed))
+}
+
 func newIPQuantizer(dim, bitWidth int, seed int64, mseQ *Quantizer) *IPQuantizer {
 	panicOnInvalid("turboquant.NewIP", validateDim(dim))
 	panicOnInvalid("turboquant.NewIP", validateIPBitWidth(bitWidth))
