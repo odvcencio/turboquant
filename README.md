@@ -1,5 +1,7 @@
 # TurboQuant
 
+SPDX-License-Identifier: Apache-2.0
+
 Go implementation of the TurboQuant MSE-optimal and inner-product-preserving
 vector quantization algorithm ([arXiv 2504.19874](https://arxiv.org/abs/2504.19874)).
 
@@ -15,7 +17,7 @@ Agents working with TurboQuant should use the [using-turboquant](https://github.
 ## Install
 
 ```
-go get github.com/odvcencio/turboquant@v0.1.2
+go get m31labs.dev/turboquant@v0.1.2
 ```
 
 Requires Go 1.25.1 or newer.
@@ -63,7 +65,7 @@ Requires Go 1.25.1 or newer.
 Minimizes reconstruction error. Use when you need to compress and recover vectors.
 
 ```go
-import "github.com/odvcencio/turboquant"
+import "m31labs.dev/turboquant"
 
 // Create a 2-bit quantizer for 384-dimensional vectors
 q := turboquant.New(384, 2)
@@ -849,7 +851,7 @@ TurboQuant achieves near-optimal distortion through three steps:
 
 3. **QJL residual correction** (IP quantizer only) — Apply a 1-bit Quantized Johnson-Lindenstrauss projection to the MSE residual. This corrects the inner product bias from MSE quantization, yielding an unbiased estimator.
 
-Reference: Zandieh, Daliri, Hadian, Mirrokni. "TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate." arXiv 2504.19874, 2025. Accepted at ICLR 2026.
+Reference: Zandieh, Daliri, Hadian, Mirrokni. "TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate." arXiv 2504.19874, 2025.
 
 ## Performance
 
@@ -881,4 +883,4 @@ Quantizers are safe for concurrent use after construction. Internally, scratch b
 
 ## License
 
-MIT
+Apache-2.0
