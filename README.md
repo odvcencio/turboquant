@@ -57,6 +57,7 @@ Requires Go 1.25.1 or newer.
 | `cmd/tqkvprofile` | Build layer profiles from sweep reports |
 | `cmd/tqkvprofilebench` | Replay capture groups through emitted runtime profiles |
 | `cmd/tqkvsummarize` | Produce compact summaries from sweep reports |
+| `cmd/tqrecall` | Measure ANN recall against exact search and gate CI on a recall drop |
 
 ## Usage
 

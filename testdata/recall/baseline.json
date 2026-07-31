@@ -1,0 +1,290 @@
+[
+  {
+    "Config": {
+      "Method": "turboquant-ip",
+      "BitWidth": 2,
+      "Seed": 42,
+      "K": [
+        1,
+        10,
+        100
+      ]
+    },
+    "Dataset": "synthetic",
+    "Dim": 64,
+    "CorpusCount": 4096,
+    "QueryCount": 256,
+    "RecallAtK": {
+      "1": 0.1328125,
+      "10": 0.48828125,
+      "100": 0.94140625
+    },
+    "BytesPerVector": 16,
+    "EncodeNanos": 8161984,
+    "QueryNanos": 111305761
+  },
+  {
+    "Config": {
+      "Method": "turboquant-ip",
+      "BitWidth": 3,
+      "Seed": 42,
+      "K": [
+        1,
+        10,
+        100
+      ]
+    },
+    "Dataset": "synthetic",
+    "Dim": 64,
+    "CorpusCount": 4096,
+    "QueryCount": 256,
+    "RecallAtK": {
+      "1": 0.328125,
+      "10": 0.828125,
+      "100": 1
+    },
+    "BytesPerVector": 24,
+    "EncodeNanos": 7710017,
+    "QueryNanos": 113454929
+  },
+  {
+    "Config": {
+      "Method": "turboquant-ip",
+      "BitWidth": 4,
+      "Seed": 42,
+      "K": [
+        1,
+        10,
+        100
+      ]
+    },
+    "Dataset": "synthetic",
+    "Dim": 64,
+    "CorpusCount": 4096,
+    "QueryCount": 256,
+    "RecallAtK": {
+      "1": 0.51953125,
+      "10": 0.96484375,
+      "100": 1
+    },
+    "BytesPerVector": 32,
+    "EncodeNanos": 12796345,
+    "QueryNanos": 498806945
+  },
+  {
+    "Config": {
+      "Method": "turboquant-ip",
+      "BitWidth": 8,
+      "Seed": 42,
+      "K": [
+        1,
+        10,
+        100
+      ]
+    },
+    "Dataset": "synthetic",
+    "Dim": 64,
+    "CorpusCount": 4096,
+    "QueryCount": 256,
+    "RecallAtK": {
+      "1": 0.89453125,
+      "10": 1,
+      "100": 1
+    },
+    "BytesPerVector": 64,
+    "EncodeNanos": 21371883,
+    "QueryNanos": 903141594
+  },
+  {
+    "Config": {
+      "Method": "turboquant-mse",
+      "BitWidth": 2,
+      "Seed": 42,
+      "K": [
+        1,
+        10,
+        100
+      ]
+    },
+    "Dataset": "synthetic",
+    "Dim": 64,
+    "CorpusCount": 4096,
+    "QueryCount": 256,
+    "RecallAtK": {
+      "1": 0.3671875,
+      "10": 0.8828125,
+      "100": 1
+    },
+    "BytesPerVector": 16,
+    "EncodeNanos": 3951863,
+    "QueryNanos": 444108172
+  },
+  {
+    "Config": {
+      "Method": "turboquant-mse",
+      "BitWidth": 3,
+      "Seed": 42,
+      "K": [
+        1,
+        10,
+        100
+      ]
+    },
+    "Dataset": "synthetic",
+    "Dim": 64,
+    "CorpusCount": 4096,
+    "QueryCount": 256,
+    "RecallAtK": {
+      "1": 0.59375,
+      "10": 0.984375,
+      "100": 1
+    },
+    "BytesPerVector": 24,
+    "EncodeNanos": 7417295,
+    "QueryNanos": 778896145
+  },
+  {
+    "Config": {
+      "Method": "turboquant-mse",
+      "BitWidth": 4,
+      "Seed": 42,
+      "K": [
+        1,
+        10,
+        100
+      ]
+    },
+    "Dataset": "synthetic",
+    "Dim": 64,
+    "CorpusCount": 4096,
+    "QueryCount": 256,
+    "RecallAtK": {
+      "1": 0.77734375,
+      "10": 1,
+      "100": 1
+    },
+    "BytesPerVector": 32,
+    "EncodeNanos": 6024582,
+    "QueryNanos": 446571337
+  },
+  {
+    "Config": {
+      "Method": "turboquant-mse",
+      "BitWidth": 8,
+      "Seed": 42,
+      "K": [
+        1,
+        10,
+        100
+      ]
+    },
+    "Dataset": "synthetic",
+    "Dim": 64,
+    "CorpusCount": 4096,
+    "QueryCount": 256,
+    "RecallAtK": {
+      "1": 0.97265625,
+      "10": 1,
+      "100": 1
+    },
+    "BytesPerVector": 64,
+    "EncodeNanos": 10808831,
+    "QueryNanos": 499217138
+  },
+  {
+    "Config": {
+      "Method": "pq",
+      "BitWidth": 2,
+      "Seed": 42,
+      "K": [
+        1,
+        10,
+        100
+      ]
+    },
+    "Dataset": "synthetic",
+    "Dim": 64,
+    "CorpusCount": 4096,
+    "QueryCount": 256,
+    "RecallAtK": {
+      "1": 0.77734375,
+      "10": 1,
+      "100": 1
+    },
+    "BytesPerVector": 32,
+    "EncodeNanos": 64304862,
+    "QueryNanos": 108066088
+  },
+  {
+    "Config": {
+      "Method": "pq",
+      "BitWidth": 3,
+      "Seed": 42,
+      "K": [
+        1,
+        10,
+        100
+      ]
+    },
+    "Dataset": "synthetic",
+    "Dim": 64,
+    "CorpusCount": 4096,
+    "QueryCount": 256,
+    "RecallAtK": {
+      "1": 0.77734375,
+      "10": 1,
+      "100": 1
+    },
+    "BytesPerVector": 32,
+    "EncodeNanos": 64734834,
+    "QueryNanos": 111049200
+  },
+  {
+    "Config": {
+      "Method": "pq",
+      "BitWidth": 4,
+      "Seed": 42,
+      "K": [
+        1,
+        10,
+        100
+      ]
+    },
+    "Dataset": "synthetic",
+    "Dim": 64,
+    "CorpusCount": 4096,
+    "QueryCount": 256,
+    "RecallAtK": {
+      "1": 0.77734375,
+      "10": 1,
+      "100": 1
+    },
+    "BytesPerVector": 32,
+    "EncodeNanos": 65136868,
+    "QueryNanos": 117799271
+  },
+  {
+    "Config": {
+      "Method": "pq",
+      "BitWidth": 8,
+      "Seed": 42,
+      "K": [
+        1,
+        10,
+        100
+      ]
+    },
+    "Dataset": "synthetic",
+    "Dim": 64,
+    "CorpusCount": 4096,
+    "QueryCount": 256,
+    "RecallAtK": {
+      "1": 0.77734375,
+      "10": 1,
+      "100": 1
+    },
+    "BytesPerVector": 32,
+    "EncodeNanos": 63435475,
+    "QueryNanos": 106896131
+  }
+]
