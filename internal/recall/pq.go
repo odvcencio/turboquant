@@ -7,9 +7,9 @@ import (
 
 // PQParams configures a product quantization (PQ) baseline.
 type PQParams struct {
-	Subvectors int   // number of subvector splits; must divide dim
-	Bits       int   // bits per subquantizer, 1-8
-	Iterations int   // Lloyd k-means iterations
+	Subvectors int // number of subvector splits; must divide dim
+	Bits       int // bits per subquantizer, 1-8
+	Iterations int // Lloyd k-means iterations
 	Seed       int64
 }
 
@@ -38,7 +38,7 @@ type PQCodebook struct {
 	Dim        int
 	Subvectors int
 	SubDim     int
-	Levels     int // number of centroids per subvector, at most 256
+	Levels     int       // number of centroids per subvector, at most 256
 	Centroids  []float32 // Subvectors * Levels * SubDim, row-major per subvector
 }
 
