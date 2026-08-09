@@ -17,7 +17,7 @@ Agents working with TurboQuant should use the [using-turboquant](https://github.
 ## Install
 
 ```
-go get m31labs.dev/turboquant@v0.1.2
+go get m31labs.dev/turboquant@v0.2.0
 ```
 
 Requires Go 1.25.1 or newer.
@@ -28,7 +28,15 @@ Requires Go 1.25.1 or newer.
   products, batch helpers, deterministic seeded construction, and caller-owned
   buffer APIs.
 - `IPQuantizer`: inner-product-preserving quantization with prepared-query
-  scoring for repeated search against a quantized corpus.
+  scoring for repeated search against a quantized corpus. Inputs do not need
+  unit norm: the quantizer stores each input's L2 norm and rescales every
+  estimate, so `E[InnerProduct(Quantize(x), y)] = <x, y>` for any `x`. A bit
+  width of 1 selects the paper's pure 1-bit QJL estimator.
+- `SplitIPQuantizer`, `SplitQuantizer`, and `SplitKVCachePage`: two
+  independent quantizer instances over disjoint channel sets, which realizes
+  the paper's fractional bit widths (for example 2.5-bit keys: 32 outlier
+  channels at 4 bits plus 96 regular channels at 2 bits over head dimension
+  128). `SelectOutlierChannels` ranks channels from calibration samples.
 - `GPUPreparedScorer`: optional WebGPU (`js/wasm`) and CUDA (`linux/amd64`
   with `cgo` and `cuda`) prepared-query scoring and top-k search.
 - `KVCachePage`: append-only quantized key/value pages with CPU scoring,
@@ -778,13 +786,14 @@ wire := turboquant.EncodeIP(384, 3, qx)
 dim, bitWidth, qx, err := turboquant.DecodeIP(wire)
 ```
 
-22-byte header: magic (`TQ`), version, type, dimension (uint16), bit-width, norm (float32), payload lengths. Big-endian. Max dimension: 65535.
+MSE records use a 22-byte version-1 header: magic (`TQ`), version, type, dimension (uint16), bit-width, norm (float32), payload lengths. IP records use a 26-byte version-2 header that also carries the input vector norm; version-1 IP records still decode, with the norm defaulting to 1. Big-endian. Max dimension: 65535.
 
 ### Serialization
 
 Save and restore quantizers. Quantizers are deterministic, so dim, bitWidth,
-seed, and rotation family are stored (25 bytes). Legacy 24-byte dense
-serialization is still accepted on decode.
+seed, and rotation family are stored (25 bytes; 26 for the default
+multi-round Hadamard rotation, which also stores its round count). Legacy
+24-byte dense serialization is still accepted on decode.
 
 ```go
 data, err := turboquant.MarshalQuantizer(q)
@@ -840,7 +849,14 @@ _ = norm
 | 4 | 8x | 192 bytes | High-quality search |
 | 8 | 4x | 384 bytes | Near-lossless, still 4x smaller than float32 |
 
-MSE distortion decreases exponentially with bit-width. At 2 bits per dimension, TurboQuant achieves ~2.7x the information-theoretic optimum.
+MSE distortion decreases exponentially with bit-width, matching the paper's
+Theorem 1 values (0.363, 0.118, 0.035, 0.0095 for 1-4 bits on the unit
+sphere). Relative to the information-theoretic lower bound `1/4^b`, the
+distortion sits at 1.45x for 1 bit and approaches the asymptotic
+Panter-Dite factor `sqrt(3)*pi/2 = 2.72x` at high bit widths. For rates
+between the integer bit widths, split channels across two instances with
+`SplitSpec` (for example 2.5 effective bits from 32 channels at 4 bits plus
+96 at 2 bits).
 
 ## Algorithm
 
@@ -848,9 +864,9 @@ TurboQuant achieves near-optimal distortion through three steps:
 
 1. **Orthogonal rotation** — By default TurboQuant runs `DefaultHadamardRounds` (3) structured Walsh-Hadamard rounds, each with an independent random permutation and independent sign vectors, for fast `O(d log d)` application per round. A single round leaves an input flat only within its power-of-two block: a one-hot vector rotated with one round stays exactly zero outside that block. A fresh permutation between rounds mixes that energy across every block, matching the paper's Theorem 1 worst-case distortion bound. Callers who need a different round count use `NewHadamardRounds`/`NewHadamardRoundsWithSeed`; a round count of 1 reproduces the original single-round transform. The legacy dense QR rotation remains available via `NewDense*` as the reference implementation. All variants aim to Gaussianize coordinates so scalar quantization is effective.
 
-2. **Lloyd-Max codebook** — Compute MSE-optimal scalar quantization centroids for the Beta distribution via the Lloyd-Max algorithm. Centroids and boundaries are cached per (dim, bitWidth) pair. Common dimensions (64, 128, 200, 256, 384, 512, 768, 1024, 1152, 1536, 2048, 3072, and 4096, at every bit width) load from a build-time embedded table instead of running the solver, so construction takes microseconds rather than seconds. Call `PrecomputeCodebook` to warm the cache for an uncommon dimension at startup, `CodebookSource` to check whether a (dim, bitWidth) pair loads from the table or the solver, and `TabulatedDims` to list the tabulated dimensions.
+2. **Lloyd-Max codebook** — Compute MSE-optimal scalar quantization centroids for the Beta distribution via the Lloyd-Max algorithm, seeded at the Panter-Dite compander quantiles (`f^(1/3)`) so every bit width converges to the optimum. (A uniform seed stalled at high bit widths: the v0.1.x table did not converge above about dimension 512, and its dim=1024 2-bit codebook produced the 1-bit MSE — a full bit lost. See the CHANGELOG note; v0.2.0 invalidates packed payloads written with v0.1.x compact serialization.) Centroids and boundaries are cached per (dim, bitWidth) pair. Common dimensions (64, 128, 200, 256, 384, 512, 768, 1024, 1152, 1536, 2048, 3072, and 4096, at every bit width) load from a build-time embedded table instead of running the solver, so construction takes microseconds rather than seconds. Call `PrecomputeCodebook` to warm the cache for an uncommon dimension at startup, `CodebookSource` to check whether a (dim, bitWidth) pair loads from the table or the solver, and `TabulatedDims` to list the tabulated dimensions.
 
-3. **QJL residual correction** (IP quantizer only) — Apply a 1-bit Quantized Johnson-Lindenstrauss projection to the MSE residual. This corrects the inner product bias from MSE quantization, yielding an unbiased estimator.
+3. **QJL residual correction** (IP quantizer only) — Apply a 1-bit Quantized Johnson-Lindenstrauss projection to the MSE residual. This corrects the inner product bias from MSE quantization, yielding an unbiased estimator. At bit width 1 the MSE stage is empty and the quantizer is the paper's pure QJL estimator. The quantizer stores each input's L2 norm (and the residual norm) and rescales every estimate, so unbiasedness holds for inputs of any norm — transformer keys included, which keeps quantized attention logits dot-product attention rather than silently becoming cosine attention.
 
 Reference: Zandieh, Daliri, Hadian, Mirrokni. "TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate." arXiv 2504.19874, 2025.
 
@@ -861,12 +877,19 @@ Benchmarks on Intel Core Ultra 9 285, pure Go with amd64 SSE row-dot kernels
 
 | Operation | dim=384 | Allocations |
 |-----------|---------|-------------|
-| QuantizeTo (2-bit MSE, default hadamard) | 3.1 us | 0 allocs |
-| DequantizeTo (2-bit MSE, default hadamard) | 2.0 us | 0 allocs |
-| Quantize (3-bit IP, default hadamard) | 11.1 us | 1 alloc |
-| InnerProduct (3-bit IP, default hadamard) | 11.0 us | 0 allocs |
-| PrepareQueryTo (3-bit IP, default hadamard) | 29.2 us | 0 allocs |
-| PreparedQuery score (3-bit IP, default hadamard) | 70.7 ns | 0 allocs |
+| QuantizeTo (2-bit MSE, default hadamard) | 5.7 us | 0 allocs |
+| DequantizeTo (2-bit MSE, default hadamard) | 4.2 us | 0 allocs |
+| Quantize (3-bit IP, default hadamard) | 18.1 us | 1 alloc |
+| InnerProduct (3-bit IP, default hadamard) | 11.9 us | 0 allocs |
+| PrepareQueryTo (3-bit IP, default hadamard) | 27.6 us | 0 allocs |
+| PreparedQuery score (3-bit IP, default hadamard) | 63.3 ns | 0 allocs |
+
+The 2-bit quantize and dequantize costs reflect the default three-round
+rotation. A single round is about 1.8x faster but leaves an input flat only
+within its power-of-two block, which violates the paper's worst-case
+distortion bound on structured inputs (see Algorithm step 1); the default has
+been three rounds since that was introduced. Prepared-query scoring, the
+search hot path, is unaffected.
 
 ## Panic conditions
 

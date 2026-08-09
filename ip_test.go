@@ -378,7 +378,7 @@ func TestScoreUpperBoundIsProvenUpperBound(t *testing.T) {
 			qx := q.Quantize(x)
 
 			score := q.InnerProductPrepared(qx, pq)
-			bound, prunable := pq.ScoreUpperBound(qx.ResNorm)
+			bound, prunable := pq.ScoreUpperBound(qx.Norm, qx.ResNorm)
 			if !prunable {
 				t.Fatalf("ipBitWidth=%d (MSE stage %d): prunable=false, want true", ipBitWidth, mseStage)
 			}
@@ -404,7 +404,7 @@ func TestScoreUpperBoundNonLUTWidthNotPrunable(t *testing.T) {
 		q := NewIPHadamardWithSeed(dim, ipBitWidth, int64(2000+ipBitWidth))
 		y := randomUnitVector(dim, rng)
 		pq := q.PrepareQuery(y)
-		_, prunable := pq.ScoreUpperBound(1.0)
+		_, prunable := pq.ScoreUpperBound(1.0, 1.0)
 		if prunable {
 			t.Fatalf("ipBitWidth=%d (MSE stage %d): prunable=true, want false (no MSE LUT)", ipBitWidth, mseStage)
 		}
@@ -419,8 +419,8 @@ func TestScoreUpperBoundMemoizedStable(t *testing.T) {
 	pq := q.PrepareQuery(y)
 
 	for _, resNorm := range []float32{0, 0.5, 1.0, 7.25} {
-		b0, p0 := pq.ScoreUpperBound(resNorm)
-		b1, p1 := pq.ScoreUpperBound(resNorm)
+		b0, p0 := pq.ScoreUpperBound(1.0, resNorm)
+		b1, p1 := pq.ScoreUpperBound(1.0, resNorm)
 		if b0 != b1 || p0 != p1 {
 			t.Fatalf("resNorm=%.4f: repeated ScoreUpperBound differ: (%.6f,%v) vs (%.6f,%v)",
 				resNorm, b0, p0, b1, p1)
@@ -429,8 +429,8 @@ func TestScoreUpperBoundMemoizedStable(t *testing.T) {
 	// Memoization must produce the same A/B as a freshly prepared, never-queried
 	// copy of the same query.
 	pq2 := q.PrepareQuery(y)
-	want, _ := pq2.ScoreUpperBound(3.0)
-	got, _ := pq.ScoreUpperBound(3.0)
+	want, _ := pq2.ScoreUpperBound(1.0, 3.0)
+	got, _ := pq.ScoreUpperBound(1.0, 3.0)
 	if got != want {
 		t.Fatalf("memoized bound %.6f != fresh bound %.6f", got, want)
 	}

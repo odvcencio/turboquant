@@ -162,16 +162,13 @@ func computeCodebook(dim, bitWidth int) codebook {
 	grid := cachedCodebookGrid(dim)
 	logNorm := betaLogNorm(dim)
 
-	// Initialize centroids uniformly in [-1, 1].
-	centroids := make([]float64, k)
-	for i := 0; i < k; i++ {
-		centroids[i] = -1 + (2*float64(i)+1)/float64(k)
-	}
-	sort.Float64s(centroids)
+	// Seed centroids at the distribution's mass quantiles; see
+	// quantileCentroids for why a uniform seed stalls at high bit widths.
+	centroids := quantileCentroids(grid, k)
 
 	boundaries := make([]float64, k-1)
 
-	for iter := 0; iter < 200; iter++ {
+	for iter := 0; iter < 500; iter++ {
 		// Compute boundaries as midpoints.
 		for i := 0; i < k-1; i++ {
 			boundaries[i] = (centroids[i] + centroids[i+1]) / 2
@@ -224,12 +221,10 @@ func computeCodebookReference(dim, bitWidth int) codebook {
 	k := 1 << uint(bitWidth) // number of levels
 	nInteg := 10000          // Simpson integration points
 
-	// Initialize centroids uniformly in [-1, 1].
-	centroids := make([]float64, k)
-	for i := 0; i < k; i++ {
-		centroids[i] = -1 + (2*float64(i)+1)/float64(k)
-	}
-	sort.Float64s(centroids)
+	// The reference solver shares the quantile seed (its purpose is to
+	// cross-check the quadrature, not the initialization) but keeps its own
+	// per-interval Simpson integration for the Lloyd updates.
+	centroids := quantileCentroids(cachedCodebookGrid(dim), k)
 
 	boundaries := make([]float64, k-1)
 
@@ -237,7 +232,7 @@ func computeCodebookReference(dim, bitWidth int) codebook {
 		return betaPDF(x, dim)
 	}
 
-	for iter := 0; iter < 200; iter++ {
+	for iter := 0; iter < 500; iter++ {
 		// Compute boundaries as midpoints.
 		for i := 0; i < k-1; i++ {
 			boundaries[i] = (centroids[i] + centroids[i+1]) / 2

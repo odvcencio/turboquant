@@ -55,6 +55,7 @@ static const char *tq_cuda_kernel =
 "    const unsigned char* mse,\n"
 "    const unsigned char* signs,\n"
 "    const float* res_norms,\n"
+"    const float* norms,\n"
 "    const float* query_mse,\n"
 "    const float* query_sign,\n"
 "    float* scores,\n"
@@ -82,7 +83,7 @@ static const char *tq_cuda_kernel =
 "    unsigned int packed = (unsigned int)signs[sign_base + i];\n"
 "    sign_sum += query_sign[query_sign_base + i * 256u + packed];\n"
 "  }\n"
-"  scores[query * count + row] = mse_score + (qjl_scale * res_norms[row]) * sign_sum;\n"
+"  scores[query * count + row] = norms[row] * (mse_score + (qjl_scale * res_norms[row]) * sign_sum);\n"
 "}\n"
 "__device__ __forceinline__ int tq_better_topk(float score, unsigned int rank, unsigned int idx, float best_score, unsigned int best_rank, unsigned int best_idx) {\n"
 "  if (score != best_score) {\n"
@@ -505,6 +506,7 @@ static int tq_cuda_launch_score(
 	CUdeviceptr mse,
 	CUdeviceptr signs,
 	CUdeviceptr res_norms,
+	CUdeviceptr norms,
 	CUdeviceptr query_mse,
 	CUdeviceptr query_sign,
 	CUdeviceptr scores,
@@ -521,6 +523,7 @@ static int tq_cuda_launch_score(
 		&mse,
 		&signs,
 		&res_norms,
+		&norms,
 		&query_mse,
 		&query_sign,
 		&scores,
@@ -551,6 +554,7 @@ static int tq_cuda_launch_score_to_host(
 	CUdeviceptr mse,
 	CUdeviceptr signs,
 	CUdeviceptr res_norms,
+	CUdeviceptr norms,
 	CUdeviceptr query_mse,
 	CUdeviceptr query_sign,
 	CUdeviceptr scores,
@@ -568,6 +572,7 @@ static int tq_cuda_launch_score_to_host(
 		&mse,
 		&signs,
 		&res_norms,
+		&norms,
 		&query_mse,
 		&query_sign,
 		&scores,
@@ -1079,13 +1084,14 @@ func (r *Runtime) DtoHUint32(dst []uint32, src DevicePtr) error {
 	return nil
 }
 
-func (r *Runtime) LaunchScore(mse, signs, resNorms, queryMSE, querySign, scores DevicePtr, count, mseBytes, signBytes, queryCount int, qjlScale float32) error {
+func (r *Runtime) LaunchScore(mse, signs, resNorms, norms, queryMSE, querySign, scores DevicePtr, count, mseBytes, signBytes, queryCount int, qjlScale float32) error {
 	var cerr *C.char
 	if C.tq_cuda_launch_score(
 		&r.rt,
 		C.CUdeviceptr(mse),
 		C.CUdeviceptr(signs),
 		C.CUdeviceptr(resNorms),
+		C.CUdeviceptr(norms),
 		C.CUdeviceptr(queryMSE),
 		C.CUdeviceptr(querySign),
 		C.CUdeviceptr(scores),
@@ -1102,7 +1108,7 @@ func (r *Runtime) LaunchScore(mse, signs, resNorms, queryMSE, querySign, scores 
 	return nil
 }
 
-func (r *Runtime) LaunchScoreToHost(dst []float32, mse, signs, resNorms, queryMSE, querySign, scores DevicePtr, count, mseBytes, signBytes, queryCount int, qjlScale float32) error {
+func (r *Runtime) LaunchScoreToHost(dst []float32, mse, signs, resNorms, norms, queryMSE, querySign, scores DevicePtr, count, mseBytes, signBytes, queryCount int, qjlScale float32) error {
 	if len(dst) == 0 {
 		return nil
 	}
@@ -1112,6 +1118,7 @@ func (r *Runtime) LaunchScoreToHost(dst []float32, mse, signs, resNorms, queryMS
 		C.CUdeviceptr(mse),
 		C.CUdeviceptr(signs),
 		C.CUdeviceptr(resNorms),
+		C.CUdeviceptr(norms),
 		C.CUdeviceptr(queryMSE),
 		C.CUdeviceptr(querySign),
 		C.CUdeviceptr(scores),

@@ -23,6 +23,11 @@ type codebookGrid struct {
 	cdf []float64
 	m1  []float64
 	m2  []float64
+	// q13 is the cumulative integral of f^(1/3), the Panter-Dite compander
+	// measure. The asymptotically optimal quantizer point density is
+	// proportional to f^(1/3), so Lloyd-Max seeds centroids at q13
+	// quantiles; see quantileCentroids.
+	q13 []float64
 }
 
 var (
@@ -62,12 +67,14 @@ func buildCodebookGrid(dim int) *codebookGrid {
 	f := make([]float64, n+1)
 	xf := make([]float64, n+1)
 	x2f := make([]float64, n+1)
+	f13 := make([]float64, n+1)
 	for i := 0; i <= n; i++ {
 		x := -1.0 + float64(i)*h
 		v := betaPDFWithLogNorm(x, dim, logNorm)
 		f[i] = v
 		xf[i] = x * v
 		x2f[i] = x * x * v
+		f13[i] = math.Cbrt(v)
 	}
 
 	return &codebookGrid{
@@ -75,6 +82,7 @@ func buildCodebookGrid(dim int) *codebookGrid {
 		cdf: cumulativeSimpson(f, h),
 		m1:  cumulativeSimpson(xf, h),
 		m2:  cumulativeSimpson(x2f, h),
+		q13: cumulativeSimpson(f13, h),
 	}
 }
 
@@ -119,6 +127,65 @@ func (g *codebookGrid) at(s []float64, x float64) float64 {
 // the cumulative array s (one of g.cdf, g.m1, or g.m2).
 func (g *codebookGrid) integral(s []float64, lo, hi float64) float64 {
 	return g.at(s, hi) - g.at(s, lo)
+}
+
+// invertCumulative returns the x at which the cumulative array s reaches
+// target, by binary search with linear interpolation between grid points.
+// The cumulative-Simpson array can dip by O(h·f/12) at a steep density
+// edge; a dip that small only shifts the interpolated seed by a fraction of
+// one grid step, which Lloyd iteration immediately polishes.
+func (g *codebookGrid) invertCumulative(s []float64, target float64) float64 {
+	n := len(s) - 1
+	if target <= 0 {
+		return -1
+	}
+	if target >= s[n] {
+		return 1
+	}
+	lo, hi := 0, n
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if s[mid] < target {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo == 0 {
+		return -1
+	}
+	x0 := -1 + float64(lo-1)*g.h
+	s0, s1 := s[lo-1], s[lo]
+	if s1 <= s0 {
+		return x0
+	}
+	return x0 + (target-s0)/(s1-s0)*g.h
+}
+
+// quantileCentroids seeds Lloyd-Max at the quantiles of the Panter-Dite
+// compander measure f^(1/3): centroid i starts at G^{-1}((i+0.5)/k) where G
+// is the normalized cumulative of f^(1/3). This is the asymptotically
+// optimal point density, so at high bit widths Lloyd starts within a few
+// percent of the optimum and only polishes finite-k corrections.
+//
+// Two failure modes make the seed choice load-bearing. A uniform seed over
+// [-1, 1] stalls outright: most centroids land in zero-mass regions of the
+// concentrated Beta density and migrate inward only about one cell per
+// iteration, leaving the b=8 codebook 26x above the Panter-Dite bound after
+// 200 iterations. A plain density-quantile seed (point density proportional
+// to f instead of f^(1/3)) removes the stall but converges to the optimum
+// at Lloyd's O(1/k^2) fixed-point rate, which still leaves b=8 more than 2x
+// off after 500 iterations. The density is log-concave for d >= 3, so the
+// polished fixed point from any non-degenerate seed is the unique global
+// optimum; the compander seed just starts close enough that polishing
+// actually finishes.
+func quantileCentroids(grid *codebookGrid, k int) []float64 {
+	total := grid.q13[len(grid.q13)-1]
+	centroids := make([]float64, k)
+	for i := range centroids {
+		centroids[i] = grid.invertCumulative(grid.q13, total*(float64(i)+0.5)/float64(k))
+	}
+	return centroids
 }
 
 // betaLogNorm computes the log normalization constant for the projected

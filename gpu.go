@@ -16,6 +16,7 @@ type GPUPreparedData struct {
 	MSE           []byte
 	Signs         []byte
 	ResNorms      []float32
+	Norms         []float32 // per-vector input norms; empty means all ones (legacy payloads)
 	TieBreakRanks []uint32
 }
 
@@ -44,6 +45,14 @@ func ValidateGPUPreparedData(dim, bitWidth int, data GPUPreparedData) (int, erro
 			return 0, fmt.Errorf("turboquant: invalid GPU residual norm at index %d: %v", i, norm)
 		}
 	}
+	if len(data.Norms) != 0 && len(data.Norms) != count {
+		return 0, fmt.Errorf("turboquant: expected GPU input norm length %d, got %d", count, len(data.Norms))
+	}
+	for i, norm := range data.Norms {
+		if math.IsNaN(float64(norm)) || math.IsInf(float64(norm), 0) || norm < 0 {
+			return 0, fmt.Errorf("turboquant: invalid GPU input norm at index %d: %v", i, norm)
+		}
+	}
 	return count, nil
 }
 
@@ -55,6 +64,7 @@ func (q *IPQuantizer) PackGPUPreparedData(vectors []IPQuantized) GPUPreparedData
 		MSE:           make([]byte, len(vectors)*mseBytes),
 		Signs:         make([]byte, len(vectors)*signBytes),
 		ResNorms:      make([]float32, len(vectors)),
+		Norms:         make([]float32, len(vectors)),
 		TieBreakRanks: make([]uint32, len(vectors)),
 	}
 	for i := range vectors {
@@ -62,6 +72,7 @@ func (q *IPQuantizer) PackGPUPreparedData(vectors []IPQuantized) GPUPreparedData
 		copy(data.MSE[i*mseBytes:(i+1)*mseBytes], vectors[i].MSE)
 		copy(data.Signs[i*signBytes:(i+1)*signBytes], vectors[i].Signs)
 		data.ResNorms[i] = vectors[i].ResNorm
+		data.Norms[i] = vectors[i].Norm
 		data.TieBreakRanks[i] = uint32(i)
 	}
 	return data
@@ -79,8 +90,8 @@ func (q *IPQuantizer) NewGPUPreparedScorerFromData(data GPUPreparedData) (*GPUPr
 	if _, err := ValidateGPUPreparedData(q.dim, q.bitWidth, data); err != nil {
 		return nil, err
 	}
-	if preparedQueryMSELUTLen(q.dim, q.mse.bitWidth) == 0 {
-		return nil, fmt.Errorf("turboquant: GPU prepared scorer requires prepared MSE LUT support for bit width %d", q.mse.bitWidth)
+	if preparedQueryMSELUTLen(q.dim, q.mseStageBits()) == 0 {
+		return nil, fmt.Errorf("turboquant: GPU prepared scorer requires prepared MSE LUT support for MSE stage bit width %d", q.mseStageBits())
 	}
 	return newGPUPreparedScorer(q, data)
 }

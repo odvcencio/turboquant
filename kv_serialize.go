@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 )
 
 const (
-	kvPageMagic   = "TQKV"
-	kvPageVersion = 1
+	kvPageMagic = "TQKV"
+	// kvPageVersion 2 adds per-token key input norms after the key residual
+	// norms. Version-1 payloads decode with every key norm set to 1.
+	kvPageVersion       = 2
+	kvPageVersionLegacy = 1
 )
 
 // StorageBytes reports the currently allocated storage footprint for this page,
@@ -82,6 +86,9 @@ func (p *KVCachePage) MarshalBinary() ([]byte, error) {
 	if err := writeFloat32s(buf, p.keyResNorms[:p.length]); err != nil {
 		return nil, err
 	}
+	if err := writeFloat32s(buf, p.keyNorms[:p.length]); err != nil {
+		return nil, err
+	}
 	if _, err := buf.Write(p.valuePacked[:p.length*p.valueBytes]); err != nil {
 		return nil, err
 	}
@@ -98,7 +105,7 @@ func UnmarshalKVCachePage(data []byte) (*KVCachePage, error) {
 	}
 	reader := bytes.NewReader(data)
 	magic := make([]byte, len(kvPageMagic))
-	if _, err := reader.Read(magic); err != nil {
+	if _, err := io.ReadFull(reader, magic); err != nil {
 		return nil, err
 	}
 	if string(magic) != kvPageMagic {
@@ -111,7 +118,7 @@ func UnmarshalKVCachePage(data []byte) (*KVCachePage, error) {
 	if err := read(&version); err != nil {
 		return nil, err
 	}
-	if version != kvPageVersion {
+	if version != kvPageVersion && version != kvPageVersionLegacy {
 		return nil, fmt.Errorf("turboquant: unsupported KV page version %d", version)
 	}
 	if err := read(&keyQLen); err != nil {
@@ -129,12 +136,21 @@ func UnmarshalKVCachePage(data []byte) (*KVCachePage, error) {
 	if capacity < length {
 		return nil, fmt.Errorf("turboquant: KV page capacity %d smaller than length %d", capacity, length)
 	}
+	// Bound capacity by the total input size before allocating: each stored
+	// entry costs several bytes, so a well-formed page always has capacity far
+	// below len(data). This rejects a crafted header that asks to preallocate
+	// gigabytes from a small payload (an unauthenticated memory-exhaustion
+	// vector through tqserve checkpoint restore) while still round-tripping any
+	// real, doubling-grown page.
+	if uint64(capacity) > uint64(len(data)) {
+		return nil, fmt.Errorf("turboquant: KV page capacity %d exceeds serialized size %d", capacity, len(data))
+	}
 	keyQBytes := make([]byte, keyQLen)
-	if _, err := reader.Read(keyQBytes); err != nil {
+	if _, err := io.ReadFull(reader, keyQBytes); err != nil {
 		return nil, err
 	}
 	valueQBytes := make([]byte, valueQLen)
-	if _, err := reader.Read(valueQBytes); err != nil {
+	if _, err := io.ReadFull(reader, valueQBytes); err != nil {
 		return nil, err
 	}
 	keyQ, err := UnmarshalIPQuantizer(keyQBytes)
@@ -147,16 +163,25 @@ func UnmarshalKVCachePage(data []byte) (*KVCachePage, error) {
 	}
 	page := NewKVCachePageWithQuantizers(keyQ, valueQ, int(capacity))
 	page.length = int(length)
-	if _, err := reader.Read(page.keyMSE[:page.length*page.keyMSEBytes]); err != nil {
+	if _, err := io.ReadFull(reader, page.keyMSE[:page.length*page.keyMSEBytes]); err != nil {
 		return nil, err
 	}
-	if _, err := reader.Read(page.keySigns[:page.length*page.keySignBytes]); err != nil {
+	if _, err := io.ReadFull(reader, page.keySigns[:page.length*page.keySignBytes]); err != nil {
 		return nil, err
 	}
 	if err := readFloat32s(reader, page.keyResNorms[:page.length]); err != nil {
 		return nil, err
 	}
-	if _, err := reader.Read(page.valuePacked[:page.length*page.valueBytes]); err != nil {
+	if version == kvPageVersion {
+		if err := readFloat32s(reader, page.keyNorms[:page.length]); err != nil {
+			return nil, err
+		}
+	} else {
+		for i := 0; i < page.length; i++ {
+			page.keyNorms[i] = 1
+		}
+	}
+	if _, err := io.ReadFull(reader, page.valuePacked[:page.length*page.valueBytes]); err != nil {
 		return nil, err
 	}
 	if err := readFloat32s(reader, page.valueNorms[:page.length]); err != nil {
@@ -169,11 +194,11 @@ func UnmarshalKVCachePage(data []byte) (*KVCachePage, error) {
 }
 
 func (p *KVCachePage) storageBytesLocked() uint64 {
-	return uint64(len(p.keyMSE) + len(p.keySigns) + len(p.valuePacked) + len(p.keyResNorms)*4 + len(p.valueNorms)*4)
+	return uint64(len(p.keyMSE) + len(p.keySigns) + len(p.valuePacked) + len(p.keyResNorms)*4 + len(p.keyNorms)*4 + len(p.valueNorms)*4)
 }
 
 func (p *KVCachePage) liveBytesLocked() uint64 {
-	return uint64(p.length*p.keyMSEBytes + p.length*p.keySignBytes + p.length*p.valueBytes + p.length*4 + p.length*4)
+	return uint64(p.length*p.keyMSEBytes + p.length*p.keySignBytes + p.length*p.valueBytes + p.length*4 + p.length*4 + p.length*4)
 }
 
 func writeFloat32s(buf *bytes.Buffer, values []float32) error {

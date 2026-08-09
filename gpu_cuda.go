@@ -30,6 +30,7 @@ type GPUPreparedScorer struct {
 	dMSE       cudaruntime.DevicePtr
 	dSigns     cudaruntime.DevicePtr
 	dResNorms  cudaruntime.DevicePtr
+	dNorms     cudaruntime.DevicePtr
 	dRanks     cudaruntime.DevicePtr
 	dQueryMSE  cudaruntime.DevicePtr
 	dQuerySign cudaruntime.DevicePtr
@@ -79,7 +80,7 @@ func newGPUPreparedScorer(q *IPQuantizer, data GPUPreparedData) (*GPUPreparedSco
 		runtime:     rt,
 		dim:         q.dim,
 		bitWidth:    q.bitWidth,
-		mseBitWidth: q.mse.bitWidth,
+		mseBitWidth: q.mseStageBits(),
 		count:       count,
 		mseBytes:    PackedSize(q.dim, q.bitWidth-1),
 		signBytes:   (q.dim + 7) / 8,
@@ -106,6 +107,18 @@ func (s *GPUPreparedScorer) uploadCorpus(data GPUPreparedData) error {
 	}
 	resNormBytes := encodeFloat32s(nil, data.ResNorms)
 	if err := s.allocAndCopy(&s.dResNorms, resNormBytes); err != nil {
+		return err
+	}
+	norms := data.Norms
+	if len(norms) == 0 {
+		// Legacy payloads carry no input norms; treat them as unit-norm.
+		norms = make([]float32, len(data.ResNorms))
+		for i := range norms {
+			norms[i] = 1
+		}
+	}
+	normBytes := encodeFloat32s(nil, norms)
+	if err := s.allocAndCopy(&s.dNorms, normBytes); err != nil {
 		return err
 	}
 	if len(data.TieBreakRanks) != 0 && !s.identityTie {
@@ -230,7 +243,7 @@ func (s *GPUPreparedScorer) launchPreparedQueryLocked(pq PreparedQuery, scoreCou
 	if err := s.ensureScoreDeviceCapacity(scoreCount); err != nil {
 		return err
 	}
-	if err := s.runtime.LaunchScore(s.dMSE, s.dSigns, s.dResNorms, s.dQueryMSE, s.dQuerySign, s.dScores, s.count, s.mseBytes, s.signBytes, 1, s.qjlScale); err != nil {
+	if err := s.runtime.LaunchScore(s.dMSE, s.dSigns, s.dResNorms, s.dNorms, s.dQueryMSE, s.dQuerySign, s.dScores, s.count, s.mseBytes, s.signBytes, 1, s.qjlScale); err != nil {
 		return fmt.Errorf("turboquant: %w", err)
 	}
 	return nil
@@ -280,7 +293,7 @@ func (s *GPUPreparedScorer) ScorePreparedQueriesTopKToTrusted(indices []uint32, 
 		return err
 	}
 	host := s.ensureHostScoreCapacity(len(pqs) * s.count)
-	if err := s.runtime.LaunchScoreToHost(host, s.dMSE, s.dSigns, s.dResNorms, s.dQueryMSE, s.dQuerySign, s.dScores, s.count, s.mseBytes, s.signBytes, len(pqs), s.qjlScale); err != nil {
+	if err := s.runtime.LaunchScoreToHost(host, s.dMSE, s.dSigns, s.dResNorms, s.dNorms, s.dQueryMSE, s.dQuerySign, s.dScores, s.count, s.mseBytes, s.signBytes, len(pqs), s.qjlScale); err != nil {
 		return fmt.Errorf("turboquant: %w", err)
 	}
 	for queryIdx := range pqs {
@@ -344,6 +357,7 @@ func (s *GPUPreparedScorer) Close() error {
 	_ = s.freeDevice(s.dMSE)
 	_ = s.freeDevice(s.dSigns)
 	_ = s.freeDevice(s.dResNorms)
+	_ = s.freeDevice(s.dNorms)
 	_ = s.freeDevice(s.dRanks)
 	_ = s.freeDevice(s.dQueryMSE)
 	_ = s.freeDevice(s.dQuerySign)
@@ -356,6 +370,7 @@ func (s *GPUPreparedScorer) Close() error {
 	s.dMSE = 0
 	s.dSigns = 0
 	s.dResNorms = 0
+	s.dNorms = 0
 	s.dRanks = 0
 	s.dQueryMSE = 0
 	s.dQuerySign = 0
@@ -448,7 +463,7 @@ func (s *GPUPreparedScorer) launchPreparedQueriesLocked(pqs []PreparedQuery, sco
 	if err := s.uploadPreparedQueriesLocked(pqs, scoreCount); err != nil {
 		return err
 	}
-	if err := s.runtime.LaunchScore(s.dMSE, s.dSigns, s.dResNorms, s.dQueryMSE, s.dQuerySign, s.dScores, s.count, s.mseBytes, s.signBytes, len(pqs), s.qjlScale); err != nil {
+	if err := s.runtime.LaunchScore(s.dMSE, s.dSigns, s.dResNorms, s.dNorms, s.dQueryMSE, s.dQuerySign, s.dScores, s.count, s.mseBytes, s.signBytes, len(pqs), s.qjlScale); err != nil {
 		return fmt.Errorf("turboquant: %w", err)
 	}
 	return nil
@@ -843,7 +858,7 @@ func (b *GPUPreparedQueryBatch) ScoreTopKTo(indices []uint32, scores []float32, 
 		return err
 	}
 	host := s.ensureHostScoreCapacity(b.count * s.count)
-	if err := s.runtime.LaunchScoreToHost(host, s.dMSE, s.dSigns, s.dResNorms, b.dMSE, b.dSigns, s.dScores, s.count, s.mseBytes, s.signBytes, b.count, s.qjlScale); err != nil {
+	if err := s.runtime.LaunchScoreToHost(host, s.dMSE, s.dSigns, s.dResNorms, s.dNorms, b.dMSE, b.dSigns, s.dScores, s.count, s.mseBytes, s.signBytes, b.count, s.qjlScale); err != nil {
 		return fmt.Errorf("turboquant: %w", err)
 	}
 	for queryIdx := 0; queryIdx < b.count; queryIdx++ {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"math"
-	"sort"
 )
 
 // This file duplicates the prefix-sum quadrature grid and Lloyd-Max solver
@@ -23,6 +22,7 @@ type codebookGrid struct {
 	cdf []float64
 	m1  []float64
 	m2  []float64
+	q13 []float64
 }
 
 func buildCodebookGrid(dim int) *codebookGrid {
@@ -33,12 +33,14 @@ func buildCodebookGrid(dim int) *codebookGrid {
 	f := make([]float64, n+1)
 	xf := make([]float64, n+1)
 	x2f := make([]float64, n+1)
+	f13 := make([]float64, n+1)
 	for i := 0; i <= n; i++ {
 		x := -1.0 + float64(i)*h
 		v := betaPDFWithLogNorm(x, dim, logNorm)
 		f[i] = v
 		xf[i] = x * v
 		x2f[i] = x * x * v
+		f13[i] = math.Cbrt(v)
 	}
 
 	return &codebookGrid{
@@ -46,6 +48,7 @@ func buildCodebookGrid(dim int) *codebookGrid {
 		cdf: cumulativeSimpson(f, h),
 		m1:  cumulativeSimpson(xf, h),
 		m2:  cumulativeSimpson(x2f, h),
+		q13: cumulativeSimpson(f13, h),
 	}
 }
 
@@ -79,6 +82,45 @@ func (g *codebookGrid) at(s []float64, x float64) float64 {
 
 func (g *codebookGrid) integral(s []float64, lo, hi float64) float64 {
 	return g.at(s, hi) - g.at(s, lo)
+}
+
+// invertCumulative and quantileCentroids mirror codebook_grid.go; keep in
+// lockstep.
+func (g *codebookGrid) invertCumulative(s []float64, target float64) float64 {
+	n := len(s) - 1
+	if target <= 0 {
+		return -1
+	}
+	if target >= s[n] {
+		return 1
+	}
+	lo, hi := 0, n
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if s[mid] < target {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo == 0 {
+		return -1
+	}
+	x0 := -1 + float64(lo-1)*g.h
+	s0, s1 := s[lo-1], s[lo]
+	if s1 <= s0 {
+		return x0
+	}
+	return x0 + (target-s0)/(s1-s0)*g.h
+}
+
+func quantileCentroids(grid *codebookGrid, k int) []float64 {
+	total := grid.q13[len(grid.q13)-1]
+	centroids := make([]float64, k)
+	for i := range centroids {
+		centroids[i] = grid.invertCumulative(grid.q13, total*(float64(i)+0.5)/float64(k))
+	}
+	return centroids
 }
 
 func betaLogNorm(dim int) float64 {
@@ -153,15 +195,11 @@ func computeCodebook(dim int, grid *codebookGrid, bitWidth int) (centroids, boun
 	k := 1 << uint(bitWidth)
 	logNorm := betaLogNorm(dim)
 
-	c := make([]float64, k)
-	for i := 0; i < k; i++ {
-		c[i] = -1 + (2*float64(i)+1)/float64(k)
-	}
-	sort.Float64s(c)
+	c := quantileCentroids(grid, k)
 
 	b := make([]float64, k-1)
 
-	for iter := 0; iter < 200; iter++ {
+	for iter := 0; iter < 500; iter++ {
 		for i := 0; i < k-1; i++ {
 			b[i] = (c[i] + c[i+1]) / 2
 		}

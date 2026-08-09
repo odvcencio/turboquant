@@ -135,7 +135,11 @@ func MarshalIPQuantizer(q *IPQuantizer) ([]byte, error) {
 	if err := validateIPBitWidth(q.bitWidth); err != nil {
 		return nil, err
 	}
-	return marshalRotationHeader(q.dim, q.bitWidth, q.seed, q.mse.rotation), nil
+	rotation := rotationState{kind: rotationKindHadamard}
+	if q.mse != nil {
+		rotation = q.mse.rotation
+	}
+	return marshalRotationHeader(q.dim, q.bitWidth, q.seed, rotation), nil
 }
 
 // UnmarshalIPQuantizer reconstructs an IPQuantizer from serialized bytes.
@@ -219,15 +223,23 @@ func MarshalPortableIPQuantizer(q *IPQuantizer) ([]byte, error) {
 	if q == nil {
 		return nil, fmt.Errorf("turboquant: nil IP quantizer")
 	}
+	family := rotationKindHadamard
+	var rotation, centroids, boundaries []float32
+	if q.mse != nil {
+		family = q.mse.portable
+		rotation = q.mse.rotation.matrix()
+		centroids = q.mse.cb.centroids
+		boundaries = q.mse.cb.boundaries
+	}
 	return marshalPortableState(
 		portableTypeIP,
 		q.dim,
 		q.bitWidth,
 		q.seed,
-		q.mse.portable,
-		q.mse.rotation.matrix(),
-		q.mse.cb.centroids,
-		q.mse.cb.boundaries,
+		family,
+		rotation,
+		centroids,
+		boundaries,
 		q.proj,
 	)
 }
@@ -242,12 +254,17 @@ func UnmarshalPortableIPQuantizer(data []byte) (*IPQuantizer, error) {
 	if state.kind != portableTypeIP {
 		return nil, fmt.Errorf("turboquant: expected portable IP quantizer, got type %d", state.kind)
 	}
+	if err := validatePortableIPState(state); err != nil {
+		return nil, err
+	}
+	if state.bitWidth == 1 {
+		proj := make([]float32, len(state.proj))
+		copy(proj, state.proj)
+		return newIPQuantizerWithProjection(state.dim, 1, state.seed, nil, proj), nil
+	}
 	cb := codebook{
 		centroids:  state.centroids,
 		boundaries: state.boundaries,
-	}
-	if err := validatePortableIPState(state); err != nil {
-		return nil, err
 	}
 	mseQ := newQuantizerWithRotation(
 		state.dim,
@@ -301,6 +318,19 @@ func validatePortableMSEState(state portableState) error {
 func validatePortableIPState(state portableState) error {
 	if err := validateIPBitWidth(state.bitWidth); err != nil {
 		return err
+	}
+	if state.bitWidth == 1 {
+		// b=1 carries no MSE stage: only the QJL projection matrix.
+		if err := validateDim(state.dim); err != nil {
+			return err
+		}
+		if len(state.rotation) != 0 || len(state.centroids) != 0 || len(state.boundaries) != 0 {
+			return fmt.Errorf("turboquant: portable b=1 IP state must not carry MSE rotation or codebook data")
+		}
+		if len(state.proj) != state.dim*state.dim {
+			return fmt.Errorf("turboquant: portable projection matrix has %d values want %d", len(state.proj), state.dim*state.dim)
+		}
+		return nil
 	}
 	if err := validatePortableMSEState(portableState{
 		dim:          state.dim,

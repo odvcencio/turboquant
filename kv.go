@@ -31,6 +31,7 @@ type KVCachePage struct {
 	keyMSE      []byte
 	keySigns    []byte
 	keyResNorms []float32
+	keyNorms    []float32
 
 	valuePacked []byte
 	valueNorms  []float32
@@ -91,6 +92,7 @@ func NewKVCachePageWithQuantizers(keyQ *IPQuantizer, valueQ *Quantizer, capacity
 		keyMSE:       make([]byte, capacity*keyMSEBytes),
 		keySigns:     make([]byte, capacity*keySignBytes),
 		keyResNorms:  make([]float32, capacity),
+		keyNorms:     make([]float32, capacity),
 		valuePacked:  make([]byte, capacity*PackedSize(valueQ.Dim(), valueQ.BitWidth())),
 		valueNorms:   make([]float32, capacity),
 		keyMSEBytes:  keyMSEBytes,
@@ -161,6 +163,8 @@ func (p *KVCachePage) Append(key, value []float32) {
 	slot := p.length
 	keyDst := p.keyAt(slot)
 	p.keyQ.QuantizeTo(&keyDst, key)
+	p.keyResNorms[slot] = keyDst.ResNorm
+	p.keyNorms[slot] = keyDst.Norm
 	p.valueNorms[slot] = p.valueQ.QuantizeTo(p.valuePackedAt(slot), value)
 	p.length++
 }
@@ -183,6 +187,8 @@ func (p *KVCachePage) AddBatch(keys, values [][]float32) {
 		slot := p.length + i
 		keyDst := p.keyAt(slot)
 		p.keyQ.QuantizeTo(&keyDst, keys[i])
+		p.keyResNorms[slot] = keyDst.ResNorm
+		p.keyNorms[slot] = keyDst.Norm
 		p.valueNorms[slot] = p.valueQ.QuantizeTo(p.valuePackedAt(slot), values[i])
 	}
 	p.length += len(keys)
@@ -666,6 +672,7 @@ func (p *KVCachePage) keyAt(pos int) IPQuantized {
 		MSE:     p.keyMSE[mseBase : mseBase+p.keyMSEBytes],
 		Signs:   p.keySigns[signBase : signBase+p.keySignBytes],
 		ResNorm: p.keyResNorms[pos],
+		Norm:    p.keyNorms[pos],
 	}
 }
 
@@ -713,6 +720,10 @@ func (p *KVCachePage) growLocked(want int) {
 	copy(keyResNorms, p.keyResNorms[:p.length])
 	p.keyResNorms = keyResNorms
 
+	keyNorms := make([]float32, newCap)
+	copy(keyNorms, p.keyNorms[:p.length])
+	p.keyNorms = keyNorms
+
 	valuePacked := make([]byte, newCap*p.valueBytes)
 	copy(valuePacked, p.valuePacked[:p.length*p.valueBytes])
 	p.valuePacked = valuePacked
@@ -727,11 +738,13 @@ func (p *KVCachePage) packGPUKeyDataLocked() GPUPreparedData {
 		MSE:           make([]byte, p.length*p.keyMSEBytes),
 		Signs:         make([]byte, p.length*p.keySignBytes),
 		ResNorms:      make([]float32, p.length),
+		Norms:         make([]float32, p.length),
 		TieBreakRanks: make([]uint32, p.length),
 	}
 	copy(data.MSE, p.keyMSE[:p.length*p.keyMSEBytes])
 	copy(data.Signs, p.keySigns[:p.length*p.keySignBytes])
 	copy(data.ResNorms, p.keyResNorms[:p.length])
+	copy(data.Norms, p.keyNorms[:p.length])
 	for i := 0; i < p.length; i++ {
 		data.TieBreakRanks[i] = uint32(i)
 	}
