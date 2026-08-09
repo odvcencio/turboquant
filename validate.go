@@ -30,8 +30,15 @@ func validateBitWidth(bitWidth int) error {
 }
 
 func validateIPBitWidth(bitWidth int) error {
-	if bitWidth < 2 || bitWidth > 8 {
-		return fmt.Errorf("turboquant: IP quantizer bitWidth must be 2-8")
+	if bitWidth < 1 || bitWidth > 8 {
+		return fmt.Errorf("turboquant: IP quantizer bitWidth must be 1-8")
+	}
+	return nil
+}
+
+func validateRounds(rounds int) error {
+	if rounds < 1 || rounds > 8 {
+		return fmt.Errorf("turboquant: rounds must be 1-8")
 	}
 	return nil
 }
@@ -78,7 +85,11 @@ func ValidateIPQuantized(dim, bitWidth int, qx IPQuantized) error {
 	if err := validateIPBitWidth(bitWidth); err != nil {
 		return err
 	}
-	if err := ValidatePacked(dim, bitWidth-1, qx.MSE); err != nil {
+	if bitWidth == 1 {
+		if len(qx.MSE) != 0 {
+			return fmt.Errorf("turboquant: b=1 IP quantization must have no MSE payload, got %d bytes", len(qx.MSE))
+		}
+	} else if err := ValidatePacked(dim, bitWidth-1, qx.MSE); err != nil {
 		return err
 	}
 	wantSigns := (dim + 7) / 8
@@ -87,6 +98,9 @@ func ValidateIPQuantized(dim, bitWidth int, qx IPQuantized) error {
 	}
 	if math.IsNaN(float64(qx.ResNorm)) || math.IsInf(float64(qx.ResNorm), 0) {
 		return fmt.Errorf("turboquant: invalid residual norm %v", qx.ResNorm)
+	}
+	if math.IsNaN(float64(qx.Norm)) || math.IsInf(float64(qx.Norm), 0) || qx.Norm < 0 {
+		return fmt.Errorf("turboquant: invalid input norm %v", qx.Norm)
 	}
 	return nil
 }

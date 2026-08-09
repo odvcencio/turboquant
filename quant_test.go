@@ -105,8 +105,11 @@ func TestQuantizerInnerProduct(t *testing.T) {
 
 func TestHadamardQuantizerRoundTrip(t *testing.T) {
 	q := NewHadamardWithSeed(384, 3, 42)
-	if q.RotationKind() != "hadamard" {
-		t.Fatalf("RotationKind() = %q want hadamard", q.RotationKind())
+	if q.RotationKind() != "hadamard-multi" {
+		t.Fatalf("RotationKind() = %q want hadamard-multi", q.RotationKind())
+	}
+	if q.Rounds() != DefaultHadamardRounds {
+		t.Fatalf("Rounds() = %d want %d", q.Rounds(), DefaultHadamardRounds)
 	}
 	rng := rand.New(rand.NewSource(99))
 	x := randomUnitVector(384, rng)
@@ -207,6 +210,39 @@ func TestDequantizeToRejectsWrongPackedLength(t *testing.T) {
 	})
 }
 
+func TestNewHadamardRoundsRejectsInvalidRounds(t *testing.T) {
+	expectPanic(t, func() {
+		NewHadamardRoundsWithSeed(64, 3, 0, 42)
+	})
+	expectPanic(t, func() {
+		NewHadamardRoundsWithSeed(64, 3, 9, 42)
+	})
+}
+
+func TestNewHadamardRoundsProducesRequestedRoundCount(t *testing.T) {
+	for _, rounds := range []int{1, 2, 3, 4, 8} {
+		q := NewHadamardRoundsWithSeed(64, 3, rounds, 42)
+		if q.Rounds() != rounds {
+			t.Errorf("rounds=%d: q.Rounds() = %d", rounds, q.Rounds())
+		}
+	}
+}
+
+func TestNewHadamardRoundsRandomSeedVaries(t *testing.T) {
+	q1 := NewHadamardRounds(64, 3, 2)
+	q2 := NewHadamardRounds(64, 3, 2)
+	if q1.Seed() == q2.Seed() {
+		t.Fatalf("expected different random seeds, got %d twice", q1.Seed())
+	}
+}
+
+func TestDenseRotationRoundsIsZero(t *testing.T) {
+	q := NewDenseWithSeed(64, 3, 42)
+	if q.Rounds() != 0 {
+		t.Fatalf("dense Rounds() = %d want 0", q.Rounds())
+	}
+}
+
 func TestHadamardMSEParityToDense(t *testing.T) {
 	if raceEnabled {
 		t.Skip("skipping statistical test under race detector")
@@ -235,6 +271,94 @@ func TestHadamardMSEParityToDense(t *testing.T) {
 		ratio := hadamardMSE / denseMSE
 		if ratio > 1.35 {
 			t.Fatalf("bw=%d: hadamard/dense MSE ratio %.3f exceeds 1.35", bw, ratio)
+		}
+	}
+}
+
+// TestQuantizerMSEOneHotMatchesDense is the direct regression test for G2:
+// with a single Hadamard round, a one-hot input stayed exactly zero outside
+// its power-of-two block, so its quantized MSE badly trailed dense QR. The
+// default multi-round rotation must match dense QR within 5 percent even on
+// this adversarial input.
+func TestQuantizerMSEOneHotMatchesDense(t *testing.T) {
+	if raceEnabled {
+		t.Skip("skipping statistical test under race detector")
+	}
+	const dim = 1536
+	for _, bw := range []int{1, 2, 3, 4} {
+		dense := NewDenseWithSeed(dim, bw, 42)
+		hadamard := NewHadamardWithSeed(dim, bw, 42)
+		rng := rand.New(rand.NewSource(123))
+
+		var denseMSE, hadamardMSE float64
+		trials := 64
+		for trial := 0; trial < trials; trial++ {
+			x := oneHotVector(dim, rng.Intn(dim))
+
+			pDense, _ := dense.Quantize(x)
+			rDense := dense.Dequantize(pDense)
+			pHad, _ := hadamard.Quantize(x)
+			rHad := hadamard.Dequantize(pHad)
+
+			for i := range x {
+				dd := float64(x[i] - rDense[i])
+				hd := float64(x[i] - rHad[i])
+				denseMSE += dd * dd
+				hadamardMSE += hd * hd
+			}
+		}
+		ratio := hadamardMSE / denseMSE
+		if ratio > 1.05 {
+			t.Fatalf("bw=%d: one-hot hadamard/dense MSE ratio %.4f exceeds 1.05", bw, ratio)
+		}
+	}
+}
+
+// TestQuantizerMSEOneHotMatchesPaperTable reuses the paper distortion bounds
+// from TestQuantizerMSEMatchesPaperTable and asserts that one-hot inputs stay
+// within 15 percent of them once the rotation flattens them.
+//
+// This runs at dimension 384, not the spec's suggested 1536. At dimension
+// 1536 the existing Lloyd-Max codebook solver (codebook.go, unchanged by
+// this phase) underflows: computeCodebook's Simpson quadrature cannot
+// resolve the Beta(d/2,d/2) density's vanishingly small tail mass at that
+// concentration, so its "negligible probability mass, keep midpoint"
+// fallback fires and produces a visibly wrong centroid (for example bit
+// width 2's outer centroid lands at 0.673 instead of near 0.09, matching bit
+// width 1's inner centroids almost exactly). That is a pre-existing
+// numerical defect in the codebook solver, not a rotation defect, and Phase
+// 3's prefix-sum quadrature is designed to fix exactly this failure mode.
+// TestQuantizerMSEOneHotMatchesDense above is dimension 1536 as specified
+// and is unaffected, because it compares dense and Hadamard rotations
+// against the same (possibly imperfect) codebook rather than against an
+// external bound.
+func TestQuantizerMSEOneHotMatchesPaperTable(t *testing.T) {
+	if raceEnabled {
+		t.Skip("skipping statistical test under race detector")
+	}
+	const dim = 384
+	bounds := map[int]float64{
+		1: 0.36, 2: 0.117, 3: 0.03, 4: 0.009,
+	}
+	for bw, bound := range bounds {
+		q := NewHadamardWithSeed(dim, bw, 42)
+		rng := rand.New(rand.NewSource(321))
+		var totalMSE float64
+		trials := 64
+		for trial := 0; trial < trials; trial++ {
+			x := oneHotVector(dim, rng.Intn(dim))
+			packed, _ := q.Quantize(x)
+			recon := q.Dequantize(packed)
+			var mse float64
+			for i := range x {
+				d := float64(x[i] - recon[i])
+				mse += d * d
+			}
+			totalMSE += mse
+		}
+		avgMSE := totalMSE / float64(trials)
+		if avgMSE > bound*1.15 {
+			t.Errorf("bw=%d: one-hot avg MSE %.4f exceeds bound %.4f by >15%%", bw, avgMSE, bound)
 		}
 	}
 }

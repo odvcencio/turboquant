@@ -6,12 +6,20 @@ import (
 	"math"
 )
 
+// The version byte (data[2]) is per record type: MSE records use wireVersion,
+// IP records use wireVersionIP2 (or wireVersion for legacy IP payloads). Read
+// the type byte (data[3]) alongside the version byte to classify a record.
 const (
-	wireMagic      = "TQ"
-	wireVersion    = 1
-	wireTypeMSE    = 1
-	wireTypeIP     = 2
-	wireHeaderSize = 22
+	wireMagic   = "TQ"
+	wireVersion = 1
+	// wireVersionIP2 extends the IP record header with the input vector norm.
+	// Version-1 IP records decode with Norm = 1, preserving their original
+	// unit-space semantics.
+	wireVersionIP2   = 2
+	wireTypeMSE      = 1
+	wireTypeIP       = 2
+	wireHeaderSize   = 22
+	wireIPHeaderSize = 26
 )
 
 // EncodeMSE encodes an MSE-quantized vector to the TurboQuant wire format.
@@ -71,13 +79,14 @@ func DecodeMSE(data []byte) (dim, bitWidth int, packed []byte, norm float32, err
 	return dim, bitWidth, packed, norm, nil
 }
 
-// EncodeIP encodes an IP-quantized vector to the TurboQuant wire format.
+// EncodeIP encodes an IP-quantized vector to the TurboQuant wire format
+// (version 2, which carries the input vector norm).
 func EncodeIP(dim, bitWidth int, qx IPQuantized) []byte {
 	panicOnInvalid("turboquant.EncodeIP", validateWireDim(dim))
 	panicOnInvalid("turboquant.EncodeIP", ValidateIPQuantized(dim, bitWidth, qx))
-	buf := make([]byte, wireHeaderSize+len(qx.MSE)+len(qx.Signs))
+	buf := make([]byte, wireIPHeaderSize+len(qx.MSE)+len(qx.Signs))
 	buf[0], buf[1] = 'T', 'Q'
-	buf[2] = wireVersion
+	buf[2] = wireVersionIP2
 	buf[3] = wireTypeIP
 	binary.BigEndian.PutUint16(buf[4:6], uint16(dim))
 	buf[6] = byte(bitWidth)
@@ -86,12 +95,15 @@ func EncodeIP(dim, bitWidth int, qx IPQuantized) []byte {
 	binary.BigEndian.PutUint32(buf[12:16], uint32(len(qx.MSE)))
 	binary.BigEndian.PutUint32(buf[16:20], uint32(len(qx.Signs)))
 	buf[20], buf[21] = 0, 0
-	copy(buf[wireHeaderSize:], qx.MSE)
-	copy(buf[wireHeaderSize+len(qx.MSE):], qx.Signs)
+	binary.BigEndian.PutUint32(buf[22:26], math.Float32bits(qx.Norm))
+	copy(buf[wireIPHeaderSize:], qx.MSE)
+	copy(buf[wireIPHeaderSize+len(qx.MSE):], qx.Signs)
 	return buf
 }
 
 // DecodeIP decodes an IP-quantized vector from the TurboQuant wire format.
+// It accepts version 1 (legacy, no input norm; Norm defaults to 1) and
+// version 2 payloads.
 func DecodeIP(data []byte) (dim, bitWidth int, qx IPQuantized, err error) {
 	if len(data) < wireHeaderSize {
 		return 0, 0, IPQuantized{}, fmt.Errorf("turboquant: data too short (%d bytes)", len(data))
@@ -99,7 +111,15 @@ func DecodeIP(data []byte) (dim, bitWidth int, qx IPQuantized, err error) {
 	if data[0] != 'T' || data[1] != 'Q' {
 		return 0, 0, IPQuantized{}, fmt.Errorf("turboquant: invalid magic %q", data[0:2])
 	}
-	if data[2] != wireVersion {
+	headerSize := wireHeaderSize
+	switch data[2] {
+	case wireVersion:
+	case wireVersionIP2:
+		headerSize = wireIPHeaderSize
+		if len(data) < headerSize {
+			return 0, 0, IPQuantized{}, fmt.Errorf("turboquant: data too short (%d bytes)", len(data))
+		}
+	default:
 		return 0, 0, IPQuantized{}, fmt.Errorf("turboquant: unsupported version %d", data[2])
 	}
 	if data[3] != wireTypeIP {
@@ -114,9 +134,19 @@ func DecodeIP(data []byte) (dim, bitWidth int, qx IPQuantized, err error) {
 		return 0, 0, IPQuantized{}, err
 	}
 	qx.ResNorm = math.Float32frombits(binary.BigEndian.Uint32(data[8:12]))
+	if math.IsNaN(float64(qx.ResNorm)) || math.IsInf(float64(qx.ResNorm), 0) || qx.ResNorm < 0 {
+		return 0, 0, IPQuantized{}, fmt.Errorf("turboquant: invalid residual norm %v", qx.ResNorm)
+	}
+	qx.Norm = 1
+	if data[2] == wireVersionIP2 {
+		qx.Norm = math.Float32frombits(binary.BigEndian.Uint32(data[22:26]))
+	}
+	if math.IsNaN(float64(qx.Norm)) || math.IsInf(float64(qx.Norm), 0) || qx.Norm < 0 {
+		return 0, 0, IPQuantized{}, fmt.Errorf("turboquant: invalid input norm %v", qx.Norm)
+	}
 	mseLen := int(binary.BigEndian.Uint32(data[12:16]))
 	signsLen := int(binary.BigEndian.Uint32(data[16:20]))
-	if len(data) != wireHeaderSize+mseLen+signsLen {
+	if len(data) != headerSize+mseLen+signsLen {
 		return 0, 0, IPQuantized{}, fmt.Errorf("turboquant: truncated payload")
 	}
 	if want := PackedSize(dim, bitWidth-1); mseLen != want {
@@ -126,8 +156,8 @@ func DecodeIP(data []byte) (dim, bitWidth int, qx IPQuantized, err error) {
 		return 0, 0, IPQuantized{}, fmt.Errorf("turboquant: invalid IP sign payload length %d want %d", signsLen, want)
 	}
 	qx.MSE = make([]byte, mseLen)
-	copy(qx.MSE, data[wireHeaderSize:wireHeaderSize+mseLen])
+	copy(qx.MSE, data[headerSize:headerSize+mseLen])
 	qx.Signs = make([]byte, signsLen)
-	copy(qx.Signs, data[wireHeaderSize+mseLen:wireHeaderSize+mseLen+signsLen])
+	copy(qx.Signs, data[headerSize+mseLen:headerSize+mseLen+signsLen])
 	return dim, bitWidth, qx, nil
 }

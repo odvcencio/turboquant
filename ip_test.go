@@ -95,11 +95,30 @@ func TestIPQuantizerPreparedQuery(t *testing.T) {
 	}
 }
 
+func TestNewIPHadamardRoundsWithSeed(t *testing.T) {
+	for _, rounds := range []int{1, 2, 3, 4} {
+		q := NewIPHadamardRoundsWithSeed(64, 3, rounds, 42)
+		if q.mse.Rounds() != rounds {
+			t.Errorf("rounds=%d: mse.Rounds() = %d", rounds, q.mse.Rounds())
+		}
+		rng := rand.New(rand.NewSource(11))
+		x := randomUnitVector(64, rng)
+		y := randomUnitVector(64, rng)
+		qx := q.Quantize(x)
+		direct := q.InnerProduct(qx, y)
+		pq := q.PrepareQuery(y)
+		prepared := q.InnerProductPrepared(qx, pq)
+		if math.Abs(float64(direct-prepared)) > 1e-5 {
+			t.Errorf("rounds=%d: prepared %.6f != direct %.6f", rounds, prepared, direct)
+		}
+	}
+}
+
 func TestIPHadamardPreparedQuery(t *testing.T) {
 	dim := 128
 	q := NewIPHadamardWithSeed(dim, 3, 42)
-	if q.RotationKind() != "hadamard" {
-		t.Fatalf("RotationKind() = %q want hadamard", q.RotationKind())
+	if q.RotationKind() != "hadamard-multi" {
+		t.Fatalf("RotationKind() = %q want hadamard-multi", q.RotationKind())
 	}
 	rng := rand.New(rand.NewSource(77))
 	x := randomUnitVector(dim, rng)
@@ -333,4 +352,93 @@ func TestIPHadamardParityToDense(t *testing.T) {
 	if ratio > 1.50 {
 		t.Fatalf("hadamard/dense IP distortion ratio %.3f exceeds 1.50", ratio)
 	}
+}
+
+func TestScoreUpperBoundIsProvenUpperBound(t *testing.T) {
+	dim := 128
+	rng := rand.New(rand.NewSource(7))
+	// IP bit widths whose MSE stage (bitWidth-1) lands on an MSE-LUT width
+	// (1/2/4/8): 2->1, 3->2, 5->4. MSE stage 8 would need IP bit width 9, which
+	// validateIPBitWidth rejects (IP bit width is 2-8), so it is unreachable via
+	// IPQuantizer. For all reachable LUT widths prunable must be true and the
+	// bound must never undercut the true prepared score.
+	for _, ipBitWidth := range []int{2, 3, 5} {
+		mseStage := ipBitWidth - 1
+		q := NewIPHadamardWithSeed(dim, ipBitWidth, int64(1000+ipBitWidth))
+		y := randomUnitVector(dim, rng)
+		pq := q.PrepareQuery(y)
+
+		// Vary residual norms by scaling corpus vectors over a wide range.
+		for trial := 0; trial < 64; trial++ {
+			scale := float32(0.01 + rng.Float64()*9.99)
+			x := randomUnitVector(dim, rng)
+			for i := range x {
+				x[i] *= scale
+			}
+			qx := q.Quantize(x)
+
+			score := q.InnerProductPrepared(qx, pq)
+			bound, prunable := pq.ScoreUpperBound(qx.Norm, qx.ResNorm)
+			if !prunable {
+				t.Fatalf("ipBitWidth=%d (MSE stage %d): prunable=false, want true", ipBitWidth, mseStage)
+			}
+			// Allow a tiny float32 slack: bound and score accumulate the same
+			// terms in different order, so equality at the aligned extreme can
+			// differ by ~ULP. A violation beyond that falsifies the proof.
+			slack := float32(1e-4) * (absF32(bound) + 1)
+			if score > bound+slack {
+				t.Fatalf("ipBitWidth=%d trial=%d: score %.6f exceeds bound %.6f (resNorm=%.4f)",
+					ipBitWidth, trial, score, bound, qx.ResNorm)
+			}
+		}
+	}
+}
+
+func TestScoreUpperBoundNonLUTWidthNotPrunable(t *testing.T) {
+	dim := 128
+	rng := rand.New(rand.NewSource(11))
+	// IP bit widths whose MSE stage (bitWidth-1) is 3/5/6/7 have no MSE LUT:
+	// 4->3, 6->5, 7->6, 8->7. ScoreUpperBound must report prunable=false.
+	for _, ipBitWidth := range []int{4, 6, 7, 8} {
+		mseStage := ipBitWidth - 1
+		q := NewIPHadamardWithSeed(dim, ipBitWidth, int64(2000+ipBitWidth))
+		y := randomUnitVector(dim, rng)
+		pq := q.PrepareQuery(y)
+		_, prunable := pq.ScoreUpperBound(1.0, 1.0)
+		if prunable {
+			t.Fatalf("ipBitWidth=%d (MSE stage %d): prunable=true, want false (no MSE LUT)", ipBitWidth, mseStage)
+		}
+	}
+}
+
+func TestScoreUpperBoundMemoizedStable(t *testing.T) {
+	dim := 96
+	rng := rand.New(rand.NewSource(13))
+	q := NewIPHadamardWithSeed(dim, 3, 42)
+	y := randomUnitVector(dim, rng)
+	pq := q.PrepareQuery(y)
+
+	for _, resNorm := range []float32{0, 0.5, 1.0, 7.25} {
+		b0, p0 := pq.ScoreUpperBound(1.0, resNorm)
+		b1, p1 := pq.ScoreUpperBound(1.0, resNorm)
+		if b0 != b1 || p0 != p1 {
+			t.Fatalf("resNorm=%.4f: repeated ScoreUpperBound differ: (%.6f,%v) vs (%.6f,%v)",
+				resNorm, b0, p0, b1, p1)
+		}
+	}
+	// Memoization must produce the same A/B as a freshly prepared, never-queried
+	// copy of the same query.
+	pq2 := q.PrepareQuery(y)
+	want, _ := pq2.ScoreUpperBound(1.0, 3.0)
+	got, _ := pq.ScoreUpperBound(1.0, 3.0)
+	if got != want {
+		t.Fatalf("memoized bound %.6f != fresh bound %.6f", got, want)
+	}
+}
+
+func absF32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

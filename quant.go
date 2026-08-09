@@ -69,10 +69,32 @@ func NewDenseWithSeed(dim, bitWidth int, seed int64) *Quantizer {
 }
 
 // NewHadamardWithSeed creates a deterministic MSE-optimal quantizer with a
-// structured Walsh-Hadamard rotation.
+// structured Walsh-Hadamard rotation. It builds DefaultHadamardRounds
+// randomized rounds.
 func NewHadamardWithSeed(dim, bitWidth int, seed int64) *Quantizer {
 	rng := mrand.New(mrand.NewSource(seed))
-	return newQuantizerWithRotation(dim, bitWidth, seed, newHadamardRotation(dim, rng), cachedCodebook(dim, bitWidth))
+	rotation := buildHadamardRotation(dim, DefaultHadamardRounds, rng)
+	return newQuantizerWithRotation(dim, bitWidth, seed, rotation, cachedCodebook(dim, bitWidth))
+}
+
+// NewHadamardRounds creates a TurboQuant quantizer with a random seed and an
+// explicit structured Walsh-Hadamard round count. rounds must be 1-8. A
+// value of 1 reproduces the legacy single-round transform.
+func NewHadamardRounds(dim, bitWidth, rounds int) *Quantizer {
+	var seedBytes [8]byte
+	rand.Read(seedBytes[:])
+	seed := int64(binary.LittleEndian.Uint64(seedBytes[:]))
+	return NewHadamardRoundsWithSeed(dim, bitWidth, rounds, seed)
+}
+
+// NewHadamardRoundsWithSeed creates a deterministic TurboQuant quantizer with
+// an explicit structured Walsh-Hadamard round count. rounds must be 1-8. A
+// value of 1 reproduces the legacy single-round transform.
+func NewHadamardRoundsWithSeed(dim, bitWidth, rounds int, seed int64) *Quantizer {
+	panicOnInvalid("turboquant.NewHadamardRounds", validateRounds(rounds))
+	rng := mrand.New(mrand.NewSource(seed))
+	rotation := buildHadamardRotation(dim, rounds, rng)
+	return newQuantizerWithRotation(dim, bitWidth, seed, rotation, cachedCodebook(dim, bitWidth))
 }
 
 func newQuantizerWithRotation(dim, bitWidth int, seed int64, rotation rotationState, cb codebook) *Quantizer {
@@ -108,6 +130,15 @@ func (q *Quantizer) Seed() int64 { return q.seed }
 
 // RotationKind returns the internal rotation family used by this quantizer.
 func (q *Quantizer) RotationKind() string { return q.rotation.kindString() }
+
+// Rounds returns the number of randomized Walsh-Hadamard rounds. It returns
+// 0 for a dense rotation.
+func (q *Quantizer) Rounds() int {
+	if q.rotation.kind == rotationKindDense {
+		return 0
+	}
+	return len(q.rotation.rounds)
+}
 
 // Quantize compresses a float32 vector to packed bytes.
 // Returns packed indices and the original vector norm (for rescaling on dequantize).

@@ -27,6 +27,7 @@ struct Params {
 @group(0) @binding(4) var<storage, read> sign_lut: array<f32>;
 @group(0) @binding(5) var<uniform> params: Params;
 @group(0) @binding(6) var<storage, read_write> scores: array<f32>;
+@group(0) @binding(7) var<storage, read> norms: array<f32>;
 
 fn load_byte(words: ptr<storage, array<u32>, read>, idx: u32) -> u32 {
 	let word = (*words)[idx >> 2u];
@@ -56,7 +57,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 		sign_sum = sign_sum + sign_lut[i * 256u + packed];
 	}
 
-	scores[row] = mse_score + (params.qjl_scale * res_norms[row]) * sign_sum;
+	scores[row] = norms[row] * (mse_score + (params.qjl_scale * res_norms[row]) * sign_sum);
 }
 `
 
@@ -169,6 +170,7 @@ struct Params {
 @group(0) @binding(4) var<storage, read> query_sign_lut: array<f32>;
 @group(0) @binding(5) var<uniform> params: Params;
 @group(0) @binding(6) var<storage, read_write> scores: array<f32>;
+@group(0) @binding(7) var<storage, read> norms: array<f32>;
 
 fn load_byte(words: ptr<storage, array<u32>, read>, idx: u32) -> u32 {
 	let word = (*words)[idx >> 2u];
@@ -201,7 +203,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 		sign_sum = sign_sum + query_sign_lut[query_sign_base + i * 256u + packed];
 	}
 
-	scores[query * params.count + row] = mse_score + (params.qjl_scale * res_norms[row]) * sign_sum;
+	scores[query * params.count + row] = norms[row] * (mse_score + (params.qjl_scale * res_norms[row]) * sign_sum);
 }
 `
 
@@ -327,6 +329,7 @@ type GPUPreparedScorer struct {
 	mseBuffer      js.Value
 	signBuffer     js.Value
 	resNormBuffer  js.Value
+	normBuffer     js.Value
 	rankBuffer     js.Value
 	mseLUTBuffer   js.Value
 	signLUTBuffer  js.Value
@@ -409,8 +412,17 @@ func newGPUPreparedScorer(q *IPQuantizer, data GPUPreparedData) (*GPUPreparedSco
 	mseData := padBytesToWord(data.MSE)
 	signData := padBytesToWord(data.Signs)
 	resNormData := float32Bytes(data.ResNorms)
+	norms := data.Norms
+	if len(norms) == 0 {
+		// Legacy payloads carry no input norms; treat them as unit-norm.
+		norms = make([]float32, count)
+		for i := range norms {
+			norms[i] = 1
+		}
+	}
+	normData := float32Bytes(norms)
 	rankData := uint32Bytes(data.TieBreakRanks)
-	mseLUTBytes := preparedQueryMSELUTLen(q.dim, q.mse.bitWidth) * 4
+	mseLUTBytes := preparedQueryMSELUTLen(q.dim, q.mseStageBits()) * 4
 	signLUTBytes := preparedQuerySignLUTLen(q.dim) * 4
 	outputBytes := count * 4
 
@@ -424,7 +436,7 @@ func newGPUPreparedScorer(q *IPQuantizer, data GPUPreparedData) (*GPUPreparedSco
 	s := &GPUPreparedScorer{
 		dim:         q.dim,
 		bitWidth:    q.bitWidth,
-		mseBitWidth: q.mse.bitWidth,
+		mseBitWidth: q.mseStageBits(),
 		count:       count,
 		mseBytes:    mseBytes,
 		signBytes:   signBytes,
@@ -437,6 +449,7 @@ func newGPUPreparedScorer(q *IPQuantizer, data GPUPreparedData) (*GPUPreparedSco
 	s.mseBuffer = createGPUBuffer(device, len(mseData), storageUsage|copyDstUsage)
 	s.signBuffer = createGPUBuffer(device, len(signData), storageUsage|copyDstUsage)
 	s.resNormBuffer = createGPUBuffer(device, len(resNormData), storageUsage|copyDstUsage)
+	s.normBuffer = createGPUBuffer(device, len(normData), storageUsage|copyDstUsage)
 	s.mseLUTBuffer = createGPUBuffer(device, mseLUTBytes, storageUsage|copyDstUsage)
 	s.signLUTBuffer = createGPUBuffer(device, signLUTBytes, storageUsage|copyDstUsage)
 	s.paramsBuffer = createGPUBuffer(device, 48, uniformUsage|copyDstUsage)
@@ -446,6 +459,7 @@ func newGPUPreparedScorer(q *IPQuantizer, data GPUPreparedData) (*GPUPreparedSco
 	writeGPUBuffer(queue, s.mseBuffer, mseData)
 	writeGPUBuffer(queue, s.signBuffer, signData)
 	writeGPUBuffer(queue, s.resNormBuffer, resNormData)
+	writeGPUBuffer(queue, s.normBuffer, normData)
 
 	scoreShader := device.Call("createShaderModule", map[string]any{
 		"code": gpuPreparedScoreWGSL,
@@ -468,6 +482,7 @@ func newGPUPreparedScorer(q *IPQuantizer, data GPUPreparedData) (*GPUPreparedSco
 			map[string]any{"binding": 4, "resource": map[string]any{"buffer": s.signLUTBuffer}},
 			map[string]any{"binding": 5, "resource": map[string]any{"buffer": s.paramsBuffer}},
 			map[string]any{"binding": 6, "resource": map[string]any{"buffer": s.outputBuffer}},
+			map[string]any{"binding": 7, "resource": map[string]any{"buffer": s.normBuffer}},
 		},
 	})
 
@@ -788,6 +803,7 @@ func (s *GPUPreparedScorer) UploadPreparedQueriesTrusted(pqs []PreparedQuery) (*
 			map[string]any{"binding": 4, "resource": map[string]any{"buffer": batch.signBuffer}},
 			map[string]any{"binding": 5, "resource": map[string]any{"buffer": batch.paramBuffer}},
 			map[string]any{"binding": 6, "resource": map[string]any{"buffer": batch.outputBuffer}},
+			map[string]any{"binding": 7, "resource": map[string]any{"buffer": s.normBuffer}},
 		},
 	})
 
@@ -926,6 +942,7 @@ func (s *GPUPreparedScorer) Close() error {
 	destroyGPUBuffer(s.mseBuffer)
 	destroyGPUBuffer(s.signBuffer)
 	destroyGPUBuffer(s.resNormBuffer)
+	destroyGPUBuffer(s.normBuffer)
 	destroyGPUBuffer(s.rankBuffer)
 	destroyGPUBuffer(s.mseLUTBuffer)
 	destroyGPUBuffer(s.signLUTBuffer)
@@ -1084,6 +1101,7 @@ func (s *GPUPreparedScorer) ensureBatchTopKCapacity(queryCount int) error {
 			map[string]any{"binding": 4, "resource": map[string]any{"buffer": s.batchSignBuf}},
 			map[string]any{"binding": 5, "resource": map[string]any{"buffer": s.batchParamBuf}},
 			map[string]any{"binding": 6, "resource": map[string]any{"buffer": s.batchOutBuf}},
+			map[string]any{"binding": 7, "resource": map[string]any{"buffer": s.normBuffer}},
 		},
 	})
 

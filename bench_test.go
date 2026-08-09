@@ -7,6 +7,24 @@ import (
 	"testing"
 )
 
+// BenchmarkNewQuantizer1536_8bit measures construction time at the largest
+// curated dimension and bit width. Normal construction hits the embedded
+// table (want under 1ms); BenchmarkNewQuantizer1536_8bitSolver forces the
+// solver path (want under 50ms).
+func BenchmarkNewQuantizer1536_8bit(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		NewWithSeed(1536, 8, int64(i))
+	}
+}
+
+// BenchmarkNewQuantizer1536_8bitSolver measures the solver path directly,
+// bypassing the embedded table.
+func BenchmarkNewQuantizer1536_8bitSolver(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		computeCodebook(1536, 8)
+	}
+}
+
 func BenchmarkQuantize384_2bit(b *testing.B) {
 	q := NewWithSeed(384, 2, 42)
 	x := randomUnitVector(384, rand.New(rand.NewSource(99)))
