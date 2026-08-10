@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.0
+## v0.2.1
 
 Paper-fidelity release. Brings the implementation in line with the TurboQuant
 paper (arXiv 2504.19874) for worst-case inputs, non-unit-norm vectors, and all
@@ -26,9 +26,15 @@ bit widths.
   **packed payloads written with v0.1.x compact serialization dequantize
   against the new centroids and are silently wrong.** Re-quantize any persisted
   vectors, or use portable serialization (which embeds the centroids and is
-  unaffected). tqserve checkpoints written before v0.2.0 decode with key input
+  unaffected). tqserve checkpoints written before v0.2.1 decode with key input
   norms defaulting to 1; long-lived sessions should re-ingest for true-IP
   scoring.
+
+## v0.2.0
+
+Module-path release: the module path moved to `m31labs.dev/turboquant`. No
+functional change to the quantizer beyond the earlier v0.1.x line; the
+paper-fidelity work is v0.2.1.
 
 ### Added
 
