@@ -1,7 +1,6 @@
 package turboquant
 
 import (
-	"math"
 	"math/rand"
 )
 
@@ -254,25 +253,4 @@ func (r rotationState) matrix() []float32 {
 		}
 	}
 	return matrix
-}
-
-func fwhtNormalizedInPlace(values []float32) {
-	if len(values) == 1 {
-		return
-	}
-	for step := 1; step < len(values); step <<= 1 {
-		jump := step << 1
-		for i := 0; i < len(values); i += jump {
-			for j := i; j < i+step; j++ {
-				a := values[j]
-				b := values[j+step]
-				values[j] = a + b
-				values[j+step] = a - b
-			}
-		}
-	}
-	scale := float32(1.0 / math.Sqrt(float64(len(values))))
-	for i := range values {
-		values[i] *= scale
-	}
 }
