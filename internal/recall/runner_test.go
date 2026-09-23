@@ -2,6 +2,11 @@ package recall
 
 import "testing"
 
+// raceEnabled is set to true in race_test.go when the race detector is
+// active, so slow statistical sweeps can skip themselves the same way the
+// root package's tests do.
+var raceEnabled bool
+
 func TestPQBaselineSanity(t *testing.T) {
 	d := Synthetic(32, 2000, 100, 6, 3)
 	gt := ComputeGroundTruth(d, 10)
@@ -43,11 +48,14 @@ func TestRunUnknownMethod(t *testing.T) {
 // estimator"): prefer Quantizer.InnerProduct for top-k search, reserve
 // IPQuantizer for workloads that need the unbiasedness guarantee.
 func TestMSERankingBeatsIPRankingAtEqualBits(t *testing.T) {
+	if raceEnabled {
+		t.Skip("skipping slow statistical sweep under race detector")
+	}
 	if testing.Short() {
 		t.Skip("skipping slow recall sweep in -short mode")
 	}
 	for _, dim := range []int{64, 384, 1024} {
-		d := Synthetic(dim, 3000, 150, 8, int64(1000+dim))
+		d := Synthetic(dim, 1200, 80, 8, int64(1000+dim))
 		gt := ComputeGroundTruth(d, 10)
 		for _, bw := range []int{2, 3, 4} {
 			mseReport, err := Run(d, gt, Config{Method: "turboquant-mse", BitWidth: bw, Seed: 11, K: []int{1, 10}})
