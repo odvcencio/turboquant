@@ -19,10 +19,10 @@ type SplitKVCachePage struct {
 	keyQ   *SplitIPQuantizer
 	valueQ *SplitQuantizer
 
-	keyOut  splitKeyStore // unused when the key spec has no outliers
-	keyReg  splitKeyStore
-	valOut  splitValueStore // unused when the value spec has no outliers
-	valReg  splitValueStore
+	keyOut splitKeyStore // unused when the key spec has no outliers
+	keyReg splitKeyStore
+	valOut splitValueStore // unused when the value spec has no outliers
+	valReg splitValueStore
 
 	length int
 	cap    int
