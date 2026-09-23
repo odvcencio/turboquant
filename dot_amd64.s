@@ -1,6 +1,6 @@
 #include "textflag.h"
 
-TEXT ·dotFloat32sSSE(SB), NOSPLIT, $16-32
+TEXT ·dotFloat32sSSE(SB), NOSPLIT, $16-28
 	MOVQ a+0(FP), SI
 	MOVQ b+8(FP), DI
 	MOVQ n+16(FP), CX
