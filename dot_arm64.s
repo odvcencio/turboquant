@@ -1,6 +1,6 @@
 #include "textflag.h"
 
-TEXT ·dotFloat32sNEON(SB), NOSPLIT, $16-32
+TEXT ·dotFloat32sNEON(SB), NOSPLIT, $16-28
 	MOVD a+0(FP), R0
 	MOVD b+8(FP), R1
 	MOVD n+16(FP), R2
