@@ -112,6 +112,33 @@ pq := q.PrepareQuery(queryVec)
 dot := q.InnerProductPrepared(qx, pq) // amortized O(d) instead of O(d^2)
 ```
 
+### Choosing an estimator for ranking vs. absolute scores
+
+`Quantizer.InnerProduct` (the MSE-optimal quantizer's estimator) and
+`IPQuantizer.InnerProduct` (the dedicated unbiased estimator) both return a
+scalar estimate of `<x, y>`, but they optimize for different things, and the
+right default depends on what the caller does with the score:
+
+- **Top-k search / ranking (recall@k)**: prefer `Quantizer` +
+  `InnerProduct`/`InnerProductPrepared`. At equal bytes per vector (the same
+  total bit budget split as `bitWidth-1` MSE bits + 1 QJL bit for
+  `IPQuantizer`), `internal/recall`'s `TestMSERankingBeatsIPRankingAtEqualBits`
+  measures higher recall@1 and recall@10 for the MSE-optimal quantizer's
+  score across dim in `{64, 384, 1024}` and bit width in `{2, 3, 4}` on a
+  clustered synthetic dataset. `IPQuantizer` spends part of its budget
+  correcting the *bias* of the inner-product estimate; for pure ranking, what
+  matters is relative order, and the extra bits bought by that residual buy
+  less than spending them on a finer MSE codebook would.
+- **Absolute-scale scores (for example attention logits, calibrated
+  similarity thresholds)**: use `IPQuantizer`. Its bias correction is the
+  point: `E[InnerProduct(Quantize(x), y)] = <x, y>` holds for any `x`, which
+  plain MSE quantization does not guarantee (the MSE codebook is optimized
+  for reconstruction error, not for inner-product unbiasedness).
+
+This is a measured recommendation, not a change to either quantizer's
+behavior — both constructors keep their existing defaults, and the choice
+between them stays explicit at the call site.
+
 ### Experimental WebGPU scorer
 
 On `js/wasm`, TurboQuant can upload a quantized IP corpus into an experimental
